@@ -1,0 +1,21 @@
+[package]
+name = "spawn_groups"
+version = "0.1.0"
+edition = "2021"
+authors = ["Genaro-Chris <christian25589@gmail.com>"]
+repository = "https://github.com/Genaro-Chris/spawn_groups/"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+publish = true
+
+readme = false
+
+
+[dependencies]
+async-std = { version = "1.12.0", default-features = true }
+async-trait = "0.1.73"
+num_cpus = "1.16.0"
+#smol = { version = "1.3.0", features = ["executor"] }
+threadpool = "1.8.1"
