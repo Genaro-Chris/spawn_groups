@@ -128,7 +128,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     ///  
     /// # Returns
     /// - true: if there's no child task still running
-    /// - false: if all child tasks are still running
+    /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
         if *self.count == 0 || self.runtime.stream.clone().task_count() == 0 {
             return true;

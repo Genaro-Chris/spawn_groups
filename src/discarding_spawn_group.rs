@@ -73,6 +73,23 @@ impl DiscardingSpawnGroup {
     }
 }
 
+impl DiscardingSpawnGroup {
+    /// A Boolean value that indicates whether the group has any remaining tasks.
+    ///
+    /// At the start of the body of a ``with_spawn_group()`` call, , or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
+    /// the spawn group is always empty.
+    ///  
+    /// # Returns
+    /// - true: if there's no child task still running
+    /// - false: if any child task is still running
+    pub fn is_empty(&self) -> bool {
+        if *self.count == 0 || self.runtime.stream.clone().task_count() == 0 {
+            return true;
+        }
+        false
+    }
+}
+
 impl Clone for DiscardingSpawnGroup {
     fn clone(&self) -> Self {
         Self {

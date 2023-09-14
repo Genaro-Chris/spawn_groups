@@ -71,7 +71,7 @@
 //! ```
 //!
 //! # Note
-//! * Re-exports ``futures::stream::StreamExt`` trait as ``StreamExt`` which provides a variety of convenient combinator functions on the various spawn groups.
+//! * Import ``StreamExt`` trait from ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
 //! * Try awaiting for child tasks to finish by calling ``wait_for_all`` unless using the [`with_discarding_spawn_group`](self::with_discarding_spawn_group) function.
 //!
 //! # Warning
