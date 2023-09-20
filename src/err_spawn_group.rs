@@ -3,8 +3,9 @@ use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
 };
+use async_std::stream::{Stream, StreamExt};
+use async_std::task::Builder;
 use async_trait::async_trait;
-use async_std::stream::Stream;
 use std::{error::Error, future::Future};
 use std::{
     ops::{Deref, DerefMut},
@@ -111,8 +112,9 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
 impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
     ///
-    /// # Panic
+    /// # Panics
     /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
+    /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
     ///
     /// # Parameter
     /// * `of_count`: The number of running child tasks to wait for their results to return
@@ -123,19 +125,25 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
         if of_count == 0 {
             return vec![];
         }
+        let buffer_count = self.runtime.stream.buffer_count().await;
+        if buffer_count == of_count {
+            let mut count = of_count;
+            let mut results = vec![];
+            while count != 0 {
+                if let Some(result) = self.runtime.stream.clone().next().await {
+                    results.push(result);
+                    count -= 1;
+                }
+            }
+            return results;
+        }
         if of_count > *self.count {
             panic!("The argument supplied cannot be greater than the number of spawned child tasks")
         }
         let mut count = of_count;
-        let mut stream = self.runtime.stream.clone();
-        let buffer_count = stream.buffer_count().await;
         let mut results = vec![];
-        if buffer_count < count {
-            let wait_count = count - buffer_count;
-            self.runtime.wait_for(wait_count)
-        }
         while count != 0 {
-            if let Some(result) = stream.pop_first().await {
+            if let Some(result) = self.runtime.stream.clone().next().await {
                 results.push(result);
                 count -= 1;
             }
@@ -157,14 +165,12 @@ impl<ValueType: Send, ErrorType: Error + Send> Clone for ErrSpawnGroup<ValueType
 impl<ValueType: Send, ErrorType: Error + Send> Deref for ErrSpawnGroup<ValueType, ErrorType> {
     type Target = AsyncIterator<Result<ValueType, ErrorType>>;
     fn deref(&self) -> &Self::Target {
-        self.runtime.wait_for(*self.count);
         self
     }
 }
 
 impl<ValueType: Send, ErrorType: Error + Send> DerefMut for ErrSpawnGroup<ValueType, ErrorType> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.runtime.wait_for(*self.count);
         self
     }
 }
@@ -173,7 +179,9 @@ impl<ValueType: Send, ErrorType: Error + Send + 'static> Drop
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     fn drop(&mut self) {
-        self.runtime.wait_for(*self.count);
+        Builder::new().blocking(async move {
+            self.wait_for_all().await;
+        });
     }
 }
 
@@ -199,8 +207,7 @@ impl<ValueType: Send + 'static, ErrorType: Error + Send + 'static> Shared
         F: Future<Output = Self::Result> + Send + 'static,
     {
         *self.count += 1;
-        let task = async_std::task::spawn(closure);
-        self.runtime.write_task(priority, task);
+        self.runtime.write_task(priority, closure);
     }
 
     fn cancel_all_tasks(&mut self) {

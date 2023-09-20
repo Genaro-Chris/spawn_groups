@@ -7,6 +7,7 @@ use std::{
 
 use async_std::stream::Stream;
 use async_std::sync::Mutex;
+use async_std::task::Builder;
 
 use super::inner::Inner;
 pub(crate) type AsyncIterator<ItemType> = dyn Stream<Item = ItemType>;
@@ -26,11 +27,13 @@ impl<ItemType> AsyncStream<ItemType> {
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn increment(&mut self) {
+    pub(crate) fn increment(&mut self) {
         let inners = self.inner.clone();
-        let mut inner_lock = inners.lock().await;
-        inner_lock.count += 1;
-        inner_lock.increment_task_count();
+        Builder::new().blocking(async move {
+            let mut inner_lock = inners.lock().await;
+            inner_lock.count += 1;
+            inner_lock.increment_task_count();
+        });
     }
 }
 
@@ -43,26 +46,14 @@ impl<ItemType> AsyncStream<ItemType> {
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn is_empty(&self) -> bool {
-        let inner_lock = self.inner.clone();
-        let inner_lock = inner_lock.lock().await;
-        (inner_lock.buffer).is_empty()
-    }
-}
-
-impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn pop_first(&mut self) -> Option<ItemType> {
-        let buffer = self.inner.clone();
-        let mut buffer_lock = buffer.lock().await;
-        buffer_lock.buffer.pop_front()
-    }
-
     pub(crate) async fn buffer_count(&self) -> usize {
         let inner_lock = self.inner.clone();
         let inner_lock = inner_lock.lock().await;
         inner_lock.buffer.len()
     }
+}
 
+impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn task_count(&self) -> usize {
         let inner_lock = self.inner.clone();
         async_std::task::block_on(async move {
@@ -124,9 +115,9 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner_lock = self.inner.clone();
         let waker_clone = cx.waker().clone();
-        async_std::task::block_on(async move {
+        let builder = Builder::new().name(String::from("Builder"));
+        builder.blocking(async move {
             let mut inner_lock = inner_lock.lock().await;
-
             if inner_lock.cancelled && !inner_lock.buffer.is_empty() {
                 return Poll::Ready(inner_lock.buffer.pop_front());
             } else if inner_lock.cancelled && inner_lock.buffer.is_empty() {

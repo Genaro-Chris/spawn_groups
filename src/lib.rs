@@ -84,6 +84,7 @@ pub mod err_spawn_group;
 pub mod meta_types;
 pub mod spawn_group;
 
+mod async_runtime;
 mod async_stream;
 mod shared;
 

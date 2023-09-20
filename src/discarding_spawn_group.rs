@@ -1,3 +1,5 @@
+use async_std::task::Builder;
+
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
 };
@@ -67,8 +69,8 @@ impl DiscardingSpawnGroup {
 }
 
 impl DiscardingSpawnGroup {
-    fn wait_for_all(&mut self) {
-        self.runtime.wait_for(*self.count);
+    async fn wait_for_all(&mut self) {
+        self.runtime.wait_for_all_tasks().await;
         *self.count = 0;
     }
 }
@@ -102,9 +104,9 @@ impl Clone for DiscardingSpawnGroup {
 
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
-        if !self.is_cancelled {
-            self.wait_for_all()
-        }
+        Builder::new().blocking(async move {
+            self.wait_for_all().await;
+        });
     }
 }
 
@@ -123,7 +125,7 @@ impl Shared for DiscardingSpawnGroup {
         F: Future<Output = Self::Result> + Send + 'static,
     {
         if !self.is_cancelled {
-            self.spawn_task(priority, closure)
+            self.add_task(priority, closure)
         }
     }
 
