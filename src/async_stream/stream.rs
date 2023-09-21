@@ -5,9 +5,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_std::stream::Stream;
-use async_std::sync::Mutex;
-use async_std::task::Builder;
+use futures_lite::Stream;
+use async_mutex::Mutex;
 
 use super::inner::Inner;
 pub(crate) type AsyncIterator<ItemType> = dyn Stream<Item = ItemType>;
@@ -29,7 +28,7 @@ impl<ItemType> AsyncStream<ItemType> {
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn increment(&mut self) {
         let inners = self.inner.clone();
-        Builder::new().blocking(async move {
+        futures_lite::future::block_on(async move {
             let mut inner_lock = inners.lock().await;
             inner_lock.count += 1;
             inner_lock.increment_task_count();
@@ -56,7 +55,7 @@ impl<ItemType> AsyncStream<ItemType> {
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn task_count(&self) -> usize {
         let inner_lock = self.inner.clone();
-        async_std::task::block_on(async move {
+        futures_lite::future::block_on(async move {
             let inner_lock = inner_lock.lock().await;
             inner_lock.task_count()
         })
@@ -70,7 +69,7 @@ impl<ItemType> AsyncStream<ItemType> {
 
     pub(crate) fn cancel_tasks(&self) {
         let inner_lock = self.inner.clone();
-        async_std::task::block_on(async move {
+        futures_lite::future::block_on(async move {
             let mut inner_lock = inner_lock.lock().await;
             inner_lock.cancel_tasks();
         });
@@ -115,8 +114,7 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner_lock = self.inner.clone();
         let waker_clone = cx.waker().clone();
-        let builder = Builder::new().name(String::from("Builder"));
-        builder.blocking(async move {
+        futures_lite::future::block_on(async move {
             let mut inner_lock = inner_lock.lock().await;
             if inner_lock.cancelled && !inner_lock.buffer.is_empty() {
                 return Poll::Ready(inner_lock.buffer.pop_front());

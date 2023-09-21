@@ -1,5 +1,4 @@
-use async_std::{stream::StreamExt, task::Builder};
-
+use futures_lite::StreamExt;
 use super::{stream::AsyncStream, task::Task};
 
 #[derive(Clone)]
@@ -19,6 +18,6 @@ impl TaskQueue {
     }
 
     pub fn pop(&mut self) -> Option<Task> {
-        Builder::new().blocking(async move { self.stream.next().await })
+        futures_lite::future::block_on(async move { self.stream.next().await })
     }
 }

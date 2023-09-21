@@ -1,4 +1,4 @@
-use async_std::stream::Stream;
+use futures_lite::Stream;
 use parking_lot::Mutex;
 use std::ops::{Deref, DerefMut};
 use std::{

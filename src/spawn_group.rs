@@ -3,8 +3,7 @@ use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
 };
-use async_std::stream::{Stream, StreamExt};
-use async_std::task::Builder;
+use futures_lite::{Stream, StreamExt};
 use async_trait::async_trait;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
@@ -170,7 +169,7 @@ impl<ValueType: Send + 'static> DerefMut for SpawnGroup<ValueType> {
 
 impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
     fn drop(&mut self) {
-        Builder::new().blocking(async move {
+        futures_lite::future::block_on(async move {
             self.wait_for_all().await;
         });
     }

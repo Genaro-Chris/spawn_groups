@@ -1,5 +1,3 @@
-use async_std::task::Builder;
-
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
 };
@@ -104,7 +102,7 @@ impl Clone for DiscardingSpawnGroup {
 
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
-        Builder::new().blocking(async move {
+        futures_lite::future::block_on(async move {
             self.wait_for_all().await;
         });
     }

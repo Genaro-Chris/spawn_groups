@@ -27,6 +27,7 @@ impl Default for Executor {
         let pool = Arc::new(
             threadpool::Builder::new()
                 .num_threads(thread_count)
+                .thread_stack_size(2_000_000)
                 .thread_name("Executor".to_owned())
                 .build(),
         );

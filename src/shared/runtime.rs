@@ -2,8 +2,7 @@ use crate::async_runtime::executor::Executor;
 use crate::async_runtime::task::Task;
 use crate::async_stream::stream::AsyncStream;
 use crate::shared::{initializible::Initializible, priority::Priority};
-use async_std::sync::Mutex;
-use async_std::task::Builder as AsyncBuilder;
+use async_mutex::Mutex;
 use num_cpus;
 use std::sync::atomic::AtomicBool;
 use std::{future::Future, sync::Arc};
@@ -45,8 +44,7 @@ impl<ItemType> RuntimeEngine<ItemType> {
         self.store(true);
         self.runtime.cancel();
         self.engine.execute(move || {
-            let builder = AsyncBuilder::new().name(String::from("Builder"));
-            builder.blocking(async move {
+            futures_lite::future::block_on(async move {
                 let mut iter = lock.lock().await;
                 while let Some((_, handle)) = iter.pop() {
                     if !handle.completed() {
@@ -89,8 +87,7 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
         });
         let lock = self.iter.clone();
         self.engine.execute(move || {
-            let builder = AsyncBuilder::new().name(String::from("Builder"));
-            builder.blocking(async move {
+            futures_lite::future::block_on(async move {
                 let mut iter = lock.lock().await;
                 iter.push((priority, task));
             });
@@ -113,7 +110,7 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
                 if handle_clone.completed() || handle_clone.cancelled {
                     return;
                 }
-                AsyncBuilder::new().blocking(handle);
+                futures_lite::future::block_on(handle);
             });
         }
         *self.count = 0;

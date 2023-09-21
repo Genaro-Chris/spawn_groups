@@ -14,9 +14,10 @@ readme = false
 
 
 [dependencies]
-async-std = { version = "1.12.0", default-features = true }
 async-trait = "0.1.73"
 num_cpus = "1.16.0"
 threadpool = "1.8.1"
 cooked-waker = "5.0.0"
 parking_lot = "0.12.1"
+futures-lite = { version = "1.13.0"}
+async-mutex = "1.4.0"
