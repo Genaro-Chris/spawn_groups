@@ -57,7 +57,7 @@ use futures_lite::StreamExt;
 use spawn_groups::Priority;
 use spawn_groups::GetType;
 
-let final_result = with_spawn_group(i64::TYPE, |mut group| async move {
+with_spawn_group(i64::TYPE, |mut group| async move {
      for i in 0..=10 {
         group.spawn_task(Priority::default(), async move {
           // simulate asynchronous operation
