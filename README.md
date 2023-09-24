@@ -1,6 +1,6 @@
 # spawn_groups
 [![rustc](https://img.shields.io/badge/rustc-1.70+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![crate](https://img.shields.io/docsrs/spawn_groups)]()
+[![crate](https://img.shields.io/docsrs/spawn_groups)](https://docs.rs/spawn_groups/0.1.0)
 [![github](https://img.shields.io/badge/spawn_group-grey?logo=Github&logoColor=white&label=github&labelColor=black)](https://github.com/Genaro-Chris/spawn_groups)
 [![license](https://img.shields.io/github/license/Genaro-Chris/spawn_groups)]()
 
@@ -57,4 +57,4 @@ async fn main() -> io::Result<()> {
 
 # Documentation
 
-For a better documentation of this swift package. Visit [here]() 
+For a better documentation of this swift package. Visit [here](https://docs.rs/spawn_groups/0.1.0) 
