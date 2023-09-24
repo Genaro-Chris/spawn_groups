@@ -12,7 +12,7 @@ This was heavily influenced by the Swift language's [`TaskGroup`](https://develo
 
 # Installation
 Add to your code 
-
+****
 ```sh
 $ cargo add spawn_groups
 ```
@@ -57,4 +57,4 @@ async fn main() -> io::Result<()> {
 
 # Documentation
 
-For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/0.1.1) 
+For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0) 
