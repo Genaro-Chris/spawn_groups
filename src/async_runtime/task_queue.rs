@@ -13,8 +13,8 @@ impl TaskQueue {
         }
     }
 
-    pub fn push(&mut self, runnable: Task) {
-        self.stream.insert_item(runnable);
+    pub fn push(&mut self, task: Task) {
+        self.stream.insert_item(task);
     }
 
     pub fn pop(&mut self) -> Option<Task> {

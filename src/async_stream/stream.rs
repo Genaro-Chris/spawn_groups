@@ -5,8 +5,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_lite::Stream;
 use async_mutex::Mutex;
+use futures_lite::Stream;
 
 use super::inner::Inner;
 pub(crate) type AsyncIterator<ItemType> = dyn Stream<Item = ItemType>;
@@ -19,17 +19,14 @@ pub struct AsyncStream<ItemType> {
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) async fn insert_item(&mut self, value: ItemType) {
         self.started = true;
-        let inners = self.inner.clone();
-        let mut inner_lock = inners.lock().await;
-        inner_lock.buffer.push_back(value);
+        self.inner.lock().await.buffer.push_back(value);
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn increment(&mut self) {
-        let inners = self.inner.clone();
         futures_lite::future::block_on(async move {
-            let mut inner_lock = inners.lock().await;
+            let mut inner_lock = self.inner.lock().await;
             inner_lock.count += 1;
             inner_lock.increment_task_count();
         });
@@ -38,40 +35,28 @@ impl<ItemType> AsyncStream<ItemType> {
 
 impl<ItemType> AsyncStream<ItemType> {
     pub async fn first(&self) -> Option<ItemType> {
-        let inners = self.inner.clone();
-        let mut buffer_lock = inners.lock().await;
-        buffer_lock.buffer.pop_front()
+        self.inner.lock().await.buffer.pop_front()
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) async fn buffer_count(&self) -> usize {
-        let inner_lock = self.inner.clone();
-        let inner_lock = inner_lock.lock().await;
-        inner_lock.buffer.len()
+        self.inner.lock().await.buffer.len()
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn task_count(&self) -> usize {
-        let inner_lock = self.inner.clone();
-        futures_lite::future::block_on(async move {
-            let inner_lock = inner_lock.lock().await;
-            inner_lock.task_count()
-        })
+        futures_lite::future::block_on(async move { self.inner.lock().await.task_count() })
     }
 
     pub(crate) async fn decrement_task_count(&mut self) {
-        let inner_lock = self.inner.clone();
-        let mut inner_lock = inner_lock.lock().await;
-        inner_lock.decrement_task_count();
+        self.inner.lock().await.decrement_task_count();
     }
 
     pub(crate) fn cancel_tasks(&self) {
-        let inner_lock = self.inner.clone();
         futures_lite::future::block_on(async move {
-            let mut inner_lock = inner_lock.lock().await;
-            inner_lock.cancel_tasks();
+            self.inner.lock().await.cancel_tasks();
         });
     }
 }
@@ -112,19 +97,14 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let inner_lock = self.inner.clone();
-        let waker_clone = cx.waker().clone();
         futures_lite::future::block_on(async move {
-            let mut inner_lock = inner_lock.lock().await;
-            if inner_lock.cancelled && !inner_lock.buffer.is_empty() {
-                return Poll::Ready(inner_lock.buffer.pop_front());
-            } else if inner_lock.cancelled && inner_lock.buffer.is_empty() {
+            let mut inner_lock = self.inner.lock().await;
+            if inner_lock.cancelled && inner_lock.buffer.is_empty() {
                 return Poll::Ready(None);
             }
-
             if inner_lock.count != 0 {
                 let Some(value) = inner_lock.buffer.pop_front() else {
-                    waker_clone.wake_by_ref();
+                    cx.waker().wake_by_ref();
                     return Poll::Pending;
                 };
                 inner_lock.count -= 1;
@@ -136,5 +116,3 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
 }
 
 unsafe impl<ItemType> Send for AsyncStream<ItemType> {}
-
-unsafe impl<ItemType> Sync for AsyncStream<ItemType> {}

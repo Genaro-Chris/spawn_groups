@@ -3,10 +3,11 @@ use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
 };
-use futures_lite::{Stream, StreamExt};
 use async_trait::async_trait;
-use std::{error::Error, future::Future};
+use futures_lite::{Stream, StreamExt};
 use std::{
+    error::Error,
+    future::Future,
     ops::{Deref, DerefMut},
     pin::Pin,
 };
@@ -14,7 +15,8 @@ use std::{
 /// Err Spawn Group
 ///
 /// A kind of a spawn group that spawns asynchronous child tasks that returns a value of Result<ValueType, ErrorType>,
-/// that implicitly wait for the spawned tasks to return before being dropped
+/// that implicitly wait for the spawned tasks to return before being dropped unless by
+/// explicitly calling ``dont_wait_at_drop()``
 ///
 /// Child tasks are spawned by calling either ``spawn_task()`` or ``spawn_task_unless_cancelled()`` methods.
 ///
@@ -23,7 +25,7 @@ use std::{
 /// Child tasks spawned to a spawn group execute concurrently, and may be scheduled in
 /// any order.
 ///
-/// It dereferences into a ``futures`` crate ``Stream`` type where the results of each child task is stored and it pops out the result in First-In First-Out
+/// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
 ///
 pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Error + Send + 'static> {
@@ -31,11 +33,19 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Error + Send + 's
     pub is_cancelled: bool,
     count: Box<usize>,
     runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
+    wait_at_drop: bool,
 }
 
 impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
     pub(crate) fn new() -> Self {
         Self::init()
+    }
+}
+
+impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+    /// Don't implicity wait for spawned child tasks to finish before being dropped
+    pub fn dont_wait_at_drop(&mut self) {
+        self.wait_at_drop = false;
     }
 }
 
@@ -113,6 +123,7 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
     ///
     /// # Panics
     /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
+    /// 
     /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
     ///
     /// # Parameter
@@ -157,6 +168,7 @@ impl<ValueType: Send, ErrorType: Error + Send> Clone for ErrSpawnGroup<ValueType
             runtime: self.runtime.clone(),
             is_cancelled: self.is_cancelled,
             count: self.count.clone(),
+            wait_at_drop: self.wait_at_drop,
         }
     }
 }
@@ -179,7 +191,9 @@ impl<ValueType: Send, ErrorType: Error + Send + 'static> Drop
 {
     fn drop(&mut self) {
         futures_lite::future::block_on(async move {
-            self.wait_for_all().await;
+            if self.wait_at_drop {
+                self.wait_for_all().await;
+            }
         });
     }
 }
@@ -189,9 +203,10 @@ impl<ValueType: Send, ErrorType: Error + Send> Initializible
 {
     fn init() -> Self {
         ErrSpawnGroup::<ValueType, ErrorType> {
-            runtime: RuntimeEngine::init(),
-            is_cancelled: false,
             count: Box::new(0),
+            is_cancelled: false,
+            runtime: RuntimeEngine::init(),
+            wait_at_drop: true,
         }
     }
 }
@@ -237,9 +252,6 @@ impl<ValueType: Send, ErrorType: Error + Send> Stream for ErrSpawnGroup<ValueTyp
     }
 }
 
-unsafe impl<ValueType: Send, ErrorType: Error + Send> Sync for ErrSpawnGroup<ValueType, ErrorType> {}
-
-unsafe impl<ValueType: Send, ErrorType: Error + Send> Send for ErrSpawnGroup<ValueType, ErrorType> {}
 
 #[async_trait]
 impl<ValueType: Send + 'static, ErrorType: Error + Send + 'static> Waitable

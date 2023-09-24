@@ -1,6 +1,7 @@
 use futures_lite::Stream;
 use parking_lot::Mutex;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::AtomicUsize;
 use std::{
     collections::VecDeque,
     pin::Pin,
@@ -10,6 +11,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct AsyncStream<ItemType> {
+    count: Arc<AtomicUsize>,
     inner: Arc<Mutex<Inner<ItemType>>>,
     started: bool,
 }
@@ -17,9 +19,8 @@ pub struct AsyncStream<ItemType> {
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn insert_item(&mut self, value: ItemType) {
         self.started = true;
-        let inners = self.inner.clone();
-        let mut inner_lock = inners.lock();
-        inner_lock.count += 1;
+        let mut inner_lock = self.inner.lock();
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         inner_lock.buffer.push_back(value);
     }
 }
@@ -27,9 +28,20 @@ impl<ItemType> AsyncStream<ItemType> {
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn new() -> Self {
         AsyncStream::<ItemType> {
+            count: Arc::new(AtomicUsize::new(0)),
             inner: Arc::new(Mutex::new(Inner::new())),
             started: false,
         }
+    }
+}
+
+impl<ItemType> AsyncStream<ItemType> {
+    fn count(&self) -> usize {
+        self.count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn decrement_count(&self) {
+        self.count.fetch_min(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -50,20 +62,16 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let inner_lock = self.inner.clone();
-        let waker_clone = cx.waker().clone();
-        let mut inner_lock = inner_lock.lock();
-        if !inner_lock.buffer.is_empty() {
-            return Poll::Ready(inner_lock.buffer.pop_front());
-        } else if inner_lock.buffer.is_empty() {
+        let mut inner_lock = self.inner.lock();
+        if inner_lock.buffer.is_empty() {
             return Poll::Ready(None);
         }
-        if inner_lock.count != 0 {
+        if self.count() != 0 {
             let Some(value) = inner_lock.buffer.pop_front() else {
-                waker_clone.wake_by_ref();
+                cx.waker().wake_by_ref();
                 return Poll::Pending;
             };
-            inner_lock.count -= 1;
+            self.decrement_count();
             return Poll::Ready(Some(value));
         }
         Poll::Ready(None)
@@ -72,18 +80,14 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
 
 unsafe impl<ItemType> Send for AsyncStream<ItemType> {}
 
-unsafe impl<ItemType> Sync for AsyncStream<ItemType> {}
-
-pub(crate) struct Inner<T> {
-    pub(crate) buffer: VecDeque<T>,
-    pub(crate) count: usize,
+struct Inner<T> {
+    buffer: VecDeque<T>,
 }
 
 impl<ItemType> Inner<ItemType> {
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             buffer: VecDeque::new(),
-            count: 0,
         }
     }
 }

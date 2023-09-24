@@ -8,7 +8,8 @@ use std::future::Future;
 ///
 /// A kind of a spawn group that spawns asynchronous tasks that returns nothing,
 /// implicitly waits for all spawned tasks to finish before being dropped
-/// and releases all the resources before being dropped.
+/// and releases all the resources before being dropped unless by
+/// explicitly calling ``dont_wait_at_drop()``
 ///
 /// Child tasks are spawned by calling either ``spawn_task()`` or ``spawn_task_unless_cancelled()`` methods.
 ///
@@ -20,8 +21,15 @@ use std::future::Future;
 pub struct DiscardingSpawnGroup {
     /// A field that indicates if the spawn group has been cancelled
     pub is_cancelled: bool,
-    pub(crate) count: Box<usize>,
-    pub(crate) runtime: RuntimeEngine<()>,
+    runtime: RuntimeEngine<()>,
+    wait_at_drop: bool,
+}
+
+impl DiscardingSpawnGroup {
+    /// Don't implicity wait for spawned child tasks to finish before being dropped
+    pub fn dont_wait_at_drop(&mut self) {
+        self.wait_at_drop = false;
+    }
 }
 
 impl DiscardingSpawnGroup {
@@ -41,7 +49,6 @@ impl DiscardingSpawnGroup {
     where
         F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,
     {
-        *self.count += 1;
         self.add_task(priority, closure);
     }
 
@@ -61,7 +68,6 @@ impl DiscardingSpawnGroup {
 
     /// Cancels all running task in the spawn group
     pub fn cancel_all(&mut self) {
-        *self.count = 0;
         self.cancel_all_tasks();
     }
 }
@@ -69,7 +75,6 @@ impl DiscardingSpawnGroup {
 impl DiscardingSpawnGroup {
     async fn wait_for_all(&mut self) {
         self.runtime.wait_for_all_tasks().await;
-        *self.count = 0;
     }
 }
 
@@ -83,7 +88,7 @@ impl DiscardingSpawnGroup {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if *self.count == 0 || self.runtime.stream.clone().task_count() == 0 {
+        if self.runtime.stream.clone().task_count() == 0 {
             return true;
         }
         false
@@ -94,17 +99,19 @@ impl Clone for DiscardingSpawnGroup {
     fn clone(&self) -> Self {
         Self {
             is_cancelled: self.is_cancelled,
-            count: self.count.clone(),
             runtime: self.runtime.clone(),
+            wait_at_drop: self.wait_at_drop,
         }
     }
 }
 
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
-        futures_lite::future::block_on(async move {
-            self.wait_for_all().await;
-        });
+        if self.wait_at_drop {
+            futures_lite::future::block_on(async move {
+                self.wait_for_all().await;
+            });
+        }
     }
 }
 
@@ -137,12 +144,8 @@ impl Initializible for DiscardingSpawnGroup {
     fn init() -> Self {
         DiscardingSpawnGroup {
             is_cancelled: false,
-            count: Box::new(0),
             runtime: RuntimeEngine::init(),
+            wait_at_drop: true,
         }
     }
 }
-
-unsafe impl Sync for DiscardingSpawnGroup {}
-
-unsafe impl Send for DiscardingSpawnGroup {}

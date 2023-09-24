@@ -7,7 +7,6 @@ use threadpool::ThreadPool;
 use std::{
     borrow::BorrowMut,
     future::Future,
-    pin::Pin,
     sync::{atomic::AtomicBool, Arc},
     task::Context,
 };
@@ -27,7 +26,6 @@ impl Default for Executor {
         let pool = Arc::new(
             threadpool::Builder::new()
                 .num_threads(thread_count)
-                .thread_stack_size(2_000_000)
                 .thread_name("Executor".to_owned())
                 .build(),
         );
@@ -61,7 +59,6 @@ impl Executor {
     {
         let task = Task {
             future: Arc::new(Mutex::new(Box::pin(task))),
-            cancelled: false,
             complete: Arc::new(AtomicBool::new(false)),
         };
         self.queue.push(task.clone());
@@ -97,16 +94,13 @@ impl Executor {
             if !self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
                 while let Some(task) = self.queue.pop() {
                     let mut queue = self.queue.clone();
-                    if !task.completed() {
+                    let notifier = Arc::new(Notifier::default());
+                    let waker = notifier.clone().into_waker();
+                    if !task.is_completed() {
+                        let task_clone = task.clone();
                         self.pool.execute(move || {
-                            let notifier = Arc::new(Notifier::default());
-                            let waker = notifier.clone().into_waker();
-                            let task_clone = task.clone();
-                            let mut task = task;
-                            #[allow(unused_mut)]
-                            let mut task = unsafe { Pin::new_unchecked(&mut task) };
+                            futures_lite::pin!(task);
                             let mut cx = Context::from_waker(&waker);
-                            let task_clone = task_clone.clone();
                             match task.borrow_mut().as_mut().poll(&mut cx) {
                                 std::task::Poll::Ready(_) => {}
                                 std::task::Poll::Pending => {
@@ -117,6 +111,7 @@ impl Executor {
                     }
                 }
             } else {
+                while self.queue.pop().is_some() {}
                 self.poll_all();
                 return;
             }
@@ -130,7 +125,7 @@ impl Executor {
     pub fn start(&self) {
         let lock_pair = self.lock_pair.clone();
         let mut executor = self.clone();
-        std::thread::spawn(move || {
+        threadpool::ThreadPool::new(1).execute(move || {
             let (lock, cvar) = &*lock_pair;
             let mut started = lock.lock();
             while !*started {

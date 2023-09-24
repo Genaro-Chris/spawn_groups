@@ -4,15 +4,10 @@
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Priority {
     BACKGROUND = 0,
-
     LOW,
-
     UTILITY,
-
     #[default]
     MEDIUM,
-
     HIGH,
-
     USERINITIATED,
 }

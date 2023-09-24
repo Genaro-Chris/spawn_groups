@@ -1,8 +1,53 @@
 //! A structured concurrency construct which provides a way to spawn and run an arbitrary number of child tasks,
 //! possibly await the results of each child task or even cancel all running child tasks.
-//! It is influenced by the Swift language's [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup) 
-//! and Go language's [`errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup)
+//! This was heavily influenced by the Swift language's [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup).
 //!
+//! # Installation
+//! Add to your source code
+//!
+//! ```sh
+//! cargo add spawn_groups
+//! ```
+//! 
+//! # Example
+//! 
+//! ```ignore
+//! use async_std::io::{self};
+//! use async_std::net::{TcpListener, TcpStream};
+//! use async_std::prelude::*;
+//! use spawn_groups::{with_err_spawn_group, GetType, Priority};
+//! 
+//! async fn process(stream: TcpStream) -> io::Result<()> {
+//!     println!("Accepted from local: {}", stream.local_addr()?);
+//!     println!("Accepted from: {}", stream.peer_addr()?);
+//!     let mut reader = stream.clone();
+//!     let mut writer = stream;
+//!     io::copy(&mut reader, &mut writer).await?;
+//!     Ok(())
+//! }
+//! 
+//! type Void = ();
+//! 
+//! #[async_std::main]
+//! async fn main() -> io::Result<()> {
+//!     let listener = TcpListener::bind("127.0.0.1:8080").await?;
+//!     println!("Listening on {}", listener.local_addr()?);
+//!     with_err_spawn_group(Void::TYPE, io::Error::TYPE, |mut group| async move {
+//!         let mut incoming = listener.incoming();
+//!         while let Some(stream) = incoming.next().await {
+//!             let Ok(stream) = stream else {
+//!                 return Err(stream.expect_err("Expected an error"));
+//!             };
+//!             group.spawn_task(Priority::default(), async move { process(stream).await });
+//!         }
+//!         Ok(())
+//!     })
+//!     .await?;
+//! 
+//!     Ok(())
+//! }
+//! ```
+//! 
 //! # Usage
 //!
 //! To properly use this crate
@@ -25,12 +70,11 @@
 //! rather than the plain ``spawn_task`` which spawns new child tasks unconditionally.
 //!
 //! # Child Task Execution Order
-//! Child tasks spawned to a spawn group execute concurrently, and may be scheduled in
-//! any order.
+//! Child tasks are scheduled in any order and spawned child tasks execute concurrently.
 //!  
 //! # Cancellation
 //!
-//! By calling explicitly calling the ``cancel_all`` method on any of the spawn groups' instance, all child tasks
+//! By calling explicitly calling the ``cancel_all`` method on any of the spawn groups' instance, all running child tasks
 //! are immediately cancelled.
 //!
 //! # Waiting
@@ -39,6 +83,7 @@
 //! are immediately awaited for.
 //!
 //! # Stream
+//! 
 //! Both [`SpawnGroup`](self::spawn_group::SpawnGroup) and [`ErrSpawnGroup`](self::err_spawn_group::ErrSpawnGroup) structs implements the ``futures_lite::Stream``
 //! which means that you can await the result of each child task asynchronously and with the help of ``StreamExt`` trait, one can call methods such as ``next``,
 //! ``map``, ``filter_map``, ``fold`` and so much more.
@@ -75,7 +120,7 @@
 //! # Note
 //! * Import ``StreamExt`` trait from ``futures_lite::StreamExt`` or ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
 //! * To await all running child tasks to finish their execution, call ``wait_for_all`` method on the spawn group instance unless using the [`with_discarding_spawn_group`](self::with_discarding_spawn_group) function.
-//! 
+//!
 //! # Warning
 //! * This crate relies on atomics
 //! * Avoid using a spawn group from outside the above functions this crate provides
@@ -109,6 +154,7 @@ use std::marker::PhantomData;
 ///
 /// * `of_type`: The type which the child task can return
 /// * `body`: an async closure that takes a mutable instance of ``SpawnGroup`` as an argument
+///
 /// # Returns
 ///
 /// Anything the ``body`` parameter returns
@@ -265,6 +311,10 @@ where
 /// # Parameters
 ///
 /// * `body`: an async closure that takes an instance of ``DiscardingSpawnGroup`` as an argument
+///
+/// # Returns
+///
+/// Anything the ``body`` parameter returns
 ///   
 /// # Example
 ///
@@ -286,11 +336,11 @@ where
 /// }).await;
 /// # });
 /// ```
-pub async fn with_discarding_spawn_group<Closure, Fut>(body: Closure)
+pub async fn with_discarding_spawn_group<Closure, Fut, ReturnType>(body: Closure) -> ReturnType
 where
-    Fut: Future<Output = ()>,
+    Fut: Future<Output = ReturnType>,
     Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + Send + 'static,
 {
     let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::new();
-    _ = body(discarding_tg).await;
+    body(discarding_tg).await
 }

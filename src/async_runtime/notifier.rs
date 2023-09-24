@@ -1,8 +1,6 @@
 use std::sync::{Mutex, Condvar};
 use cooked_waker::WakeRef;
 
-
-
 #[derive(Debug, Default)] 
 pub struct Notifier {
     was_notified: Mutex<bool>,

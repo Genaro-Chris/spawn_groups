@@ -9,7 +9,7 @@ pub(crate) struct Inner<T> {
 impl<ItemType> Inner<ItemType> {
     pub(crate) fn new() -> Self {
         Self {
-            buffer: VecDeque::from([]),
+            buffer: VecDeque::new(),
             cancelled: false,
             count: 0,
             task_count: 0,
