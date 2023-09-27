@@ -18,7 +18,7 @@ $ cargo add spawn_groups
 ```
 
 # Example
-```
+```rust
 use async_std::io::{self};
 use async_std::net::{TcpListener, TcpStream};
 use async_std::prelude::*;
