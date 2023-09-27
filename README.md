@@ -1,23 +1,27 @@
 # spawn_groups
+
 [![rustc](https://img.shields.io/badge/rustc-1.70+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![crate](https://img.shields.io/docsrs/spawn_groups)](https://docs.rs/spawn_groups/0.1.0)
 [![github](https://img.shields.io/badge/spawn_group-grey?logo=Github&logoColor=white&label=github&labelColor=black)](https://github.com/Genaro-Chris/spawn_groups)
 [![license](https://img.shields.io/github/license/Genaro-Chris/spawn_groups)]()
 
-# Introduction
+## Introduction
 
 A structured concurrency construct which provides a way to spawn and run an arbitrary number of child tasks,
 possibly await the results of each child task immediately after it has finish executing, cancel all running child tasks or wait for all child tasks to finish their execution.
 This was heavily influenced by the Swift language's [`TaskGroup`](https://developer.apple.com/documentation/swift/taskgroup).
 
-# Installation
-Add to your code 
+## Installation
+
+Add to your code
 ****
+
 ```sh
-$ cargo add spawn_groups
+cargo add spawn_groups
 ```
 
-# Example
+## Example
+
 ```rust
 use async_std::io::{self};
 use async_std::net::{TcpListener, TcpStream};
@@ -55,6 +59,6 @@ async fn main() -> io::Result<()> {
 }
 ```
 
-# Documentation
+## Documentation
 
-For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0) 
+For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0)
