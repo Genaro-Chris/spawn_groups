@@ -14,7 +14,6 @@ This was heavily influenced by the Swift language's [`TaskGroup`](https://develo
 ## Installation
 
 Add to your code
-****
 
 ```sh
 cargo add spawn_groups
