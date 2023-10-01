@@ -1,16 +1,11 @@
-use crate::async_stream::stream::{AsyncIterator, AsyncStream};
+use crate::async_stream::stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
-use std::{
-    error::Error,
-    future::Future,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-};
+use std::{future::Future, pin::Pin};
 
 /// Err Spawn Group
 ///
@@ -28,7 +23,7 @@ use std::{
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
 ///
-pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Error + Send + 'static> {
+pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     count: Box<usize>,
@@ -36,20 +31,20 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Error + Send + 's
     wait_at_drop: bool,
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     pub(crate) fn new() -> Self {
         Self::init()
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Don't implicity wait for spawned child tasks to finish before being dropped
     pub fn dont_wait_at_drop(&mut self) {
         self.wait_at_drop = false;
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Spawns a new task into the spawn group
     ///
     /// # Parameters
@@ -87,21 +82,21 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Returns the first element of the stream, or None if it is empty.
     pub async fn first(&self) -> Option<<ErrSpawnGroup<ValueType, ErrorType> as Shared>::Result> {
         self.runtime.stream.first().await
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
         self.wait().await;
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// A Boolean value that indicates whether the group has any remaining tasks.
     ///
     /// At the start of the body of a ``with_err_spawn_group`` function call, or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
@@ -118,12 +113,12 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
     ///
     /// # Panics
     /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
-    /// 
+    ///
     /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
     ///
     /// # Parameter
@@ -162,7 +157,7 @@ impl<ValueType: Send, ErrorType: Error + Send> ErrSpawnGroup<ValueType, ErrorTyp
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> Clone for ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> Clone for ErrSpawnGroup<ValueType, ErrorType> {
     fn clone(&self) -> Self {
         Self {
             runtime: self.runtime.clone(),
@@ -173,32 +168,17 @@ impl<ValueType: Send, ErrorType: Error + Send> Clone for ErrSpawnGroup<ValueType
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> Deref for ErrSpawnGroup<ValueType, ErrorType> {
-    type Target = AsyncIterator<Result<ValueType, ErrorType>>;
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl<ValueType: Send, ErrorType: Error + Send> DerefMut for ErrSpawnGroup<ValueType, ErrorType> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self
-    }
-}
-
-impl<ValueType: Send, ErrorType: Error + Send + 'static> Drop
+impl<ValueType: Send, ErrorType: Send + 'static> Drop
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     fn drop(&mut self) {
-        futures_lite::future::block_on(async move {
-            if self.wait_at_drop {
-                self.wait_for_all().await;
-            }
-        });
+        if self.wait_at_drop {
+            self.runtime.wait_for_all_tasks_non_async();
+        }
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> Initializible
+impl<ValueType: Send, ErrorType: Send> Initializible
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     fn init() -> Self {
@@ -211,7 +191,7 @@ impl<ValueType: Send, ErrorType: Error + Send> Initializible
     }
 }
 
-impl<ValueType: Send + 'static, ErrorType: Error + Send + 'static> Shared
+impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     type Result = Result<ValueType, ErrorType>;
@@ -240,21 +220,27 @@ impl<ValueType: Send + 'static, ErrorType: Error + Send + 'static> Shared
     }
 }
 
-impl<ValueType: Send, ErrorType: Error + Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
+impl <ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+    fn poll_all(&self) {
+        self.runtime.poll();
+    }
+}
+
+impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
     type Item = Result<ValueType, ErrorType>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
+        self.poll_all();
         let pinned_stream = Pin::new(&mut self.runtime.stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
 }
 
-
 #[async_trait]
-impl<ValueType: Send + 'static, ErrorType: Error + Send + 'static> Waitable
+impl<ValueType: Send + 'static, ErrorType: Send + 'static> Waitable
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     async fn wait(&mut self) {

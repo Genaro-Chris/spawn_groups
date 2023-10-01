@@ -1,6 +1,6 @@
-use futures_lite::StreamExt;
 use super::{stream::AsyncStream, task::Task};
-
+use crate::executors::block_on;
+use futures_lite::StreamExt;
 #[derive(Clone)]
 pub struct TaskQueue {
     pub(crate) stream: AsyncStream<Task>,
@@ -18,6 +18,6 @@ impl TaskQueue {
     }
 
     pub fn pop(&mut self) -> Option<Task> {
-        futures_lite::future::block_on(async move { self.stream.next().await })
+        block_on(async move { self.stream.next().await })
     }
 }

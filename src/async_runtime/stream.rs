@@ -1,6 +1,5 @@
 use futures_lite::Stream;
 use parking_lot::Mutex;
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicUsize;
 use std::{
     collections::VecDeque,
@@ -45,19 +44,6 @@ impl<ItemType> AsyncStream<ItemType> {
     }
 }
 
-impl<ItemType: 'static> Deref for AsyncStream<ItemType> {
-    type Target = dyn Stream<Item = ItemType>;
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl<ItemType: 'static> DerefMut for AsyncStream<ItemType> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self
-    }
-}
-
 impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
@@ -78,7 +64,6 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     }
 }
 
-unsafe impl<ItemType> Send for AsyncStream<ItemType> {}
 
 struct Inner<T> {
     buffer: VecDeque<T>,

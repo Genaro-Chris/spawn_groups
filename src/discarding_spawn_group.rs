@@ -73,12 +73,6 @@ impl DiscardingSpawnGroup {
 }
 
 impl DiscardingSpawnGroup {
-    async fn wait_for_all(&mut self) {
-        self.runtime.wait_for_all_tasks().await;
-    }
-}
-
-impl DiscardingSpawnGroup {
     /// A Boolean value that indicates whether the group has any remaining tasks.
     ///
     /// At the start of the body of a ``with_spawn_group()`` call, , or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
@@ -108,9 +102,7 @@ impl Clone for DiscardingSpawnGroup {
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
-            futures_lite::future::block_on(async move {
-                self.wait_for_all().await;
-            });
+            self.runtime.wait_for_all_tasks_non_async();
         }
     }
 }

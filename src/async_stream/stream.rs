@@ -1,4 +1,3 @@
-use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::{
     pin::Pin,
@@ -6,11 +5,11 @@ use std::{
 };
 
 use async_mutex::Mutex;
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
+
+use crate::executors::block_on;
 
 use super::inner::Inner;
-pub(crate) type AsyncIterator<ItemType> = dyn Stream<Item = ItemType>;
-
 pub struct AsyncStream<ItemType> {
     inner: Arc<Mutex<Inner<ItemType>>>,
     started: bool,
@@ -24,18 +23,17 @@ impl<ItemType> AsyncStream<ItemType> {
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) fn increment(&mut self) {
-        futures_lite::future::block_on(async move {
-            let mut inner_lock = self.inner.lock().await;
-            inner_lock.count += 1;
-            inner_lock.increment_task_count();
-        });
+    pub(crate) async fn increment(&mut self) {
+        let mut inner_lock = self.inner.lock().await;
+        inner_lock.count += 1;
+        inner_lock.increment_task_count();
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub async fn first(&self) -> Option<ItemType> {
-        self.inner.lock().await.buffer.pop_front()
+        let mut cloned = self.clone();
+        cloned.next().await
     }
 }
 
@@ -47,7 +45,7 @@ impl<ItemType> AsyncStream<ItemType> {
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn task_count(&self) -> usize {
-        futures_lite::future::block_on(async move { self.inner.lock().await.task_count() })
+        block_on(async move { self.inner.lock().await.task_count() })
     }
 
     pub(crate) async fn decrement_task_count(&mut self) {
@@ -55,7 +53,7 @@ impl<ItemType> AsyncStream<ItemType> {
     }
 
     pub(crate) fn cancel_tasks(&self) {
-        futures_lite::future::block_on(async move {
+        block_on(async move {
             self.inner.lock().await.cancel_tasks();
         });
     }
@@ -79,25 +77,11 @@ impl<ItemType> AsyncStream<ItemType> {
     }
 }
 
-impl<ItemType: 'static> Deref for AsyncStream<ItemType> {
-    type Target = dyn Stream<Item = ItemType>;
-
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl<ItemType: 'static> DerefMut for AsyncStream<ItemType> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self
-    }
-}
-
 impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        futures_lite::future::block_on(async move {
+        block_on(async move {
             let mut inner_lock = self.inner.lock().await;
             if inner_lock.cancelled && inner_lock.buffer.is_empty() {
                 return Poll::Ready(None);
@@ -114,5 +98,3 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
         })
     }
 }
-
-unsafe impl<ItemType> Send for AsyncStream<ItemType> {}

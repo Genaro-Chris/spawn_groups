@@ -1,3 +1,5 @@
+use crate::pin_future;
+
 use super::{notifier::Notifier, task::Task, task_queue::TaskQueue};
 
 use cooked_waker::IntoWaker;
@@ -5,7 +7,6 @@ use parking_lot::{Condvar, Mutex};
 use threadpool::ThreadPool;
 
 use std::{
-    borrow::BorrowMut,
     future::Future,
     sync::{atomic::AtomicBool, Arc},
     task::Context,
@@ -72,7 +73,7 @@ impl Executor {
     fn notify(&self) {
         self.store(true);
         let pair2 = self.lock_pair.clone();
-        std::thread::spawn(move || {
+        threadpool::ThreadPool::new(1).execute(move || {
             let (lock, cvar) = &*pair2;
             let mut started = lock.lock();
             *started = true;
@@ -92,16 +93,17 @@ impl Executor {
     pub fn run(&mut self) {
         loop {
             if !self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                let queue = self.queue.clone();
+                let notifier = Arc::new(Notifier::default());
                 while let Some(task) = self.queue.pop() {
-                    let mut queue = self.queue.clone();
-                    let notifier = Arc::new(Notifier::default());
-                    let waker = notifier.clone().into_waker();
                     if !task.is_completed() {
+                        let mut queue = queue.clone();
+                        let waker = notifier.clone().into_waker();
                         let task_clone = task.clone();
                         self.pool.execute(move || {
-                            futures_lite::pin!(task);
+                            pin_future!(task);
                             let mut cx = Context::from_waker(&waker);
-                            match task.borrow_mut().as_mut().poll(&mut cx) {
+                            match task.as_mut().poll(&mut cx) {
                                 std::task::Poll::Ready(_) => {}
                                 std::task::Poll::Pending => {
                                     queue.push(task_clone);

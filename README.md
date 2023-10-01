@@ -62,3 +62,6 @@ async fn main() -> io::Result<()> {
 ## Documentation
 
 For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0)
+
+
+# Comparisons against existing alternatives

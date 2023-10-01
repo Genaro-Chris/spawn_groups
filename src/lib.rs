@@ -61,6 +61,12 @@
 //! * ``with_discarding_spawn_group`` for the creation of a dynamic number of asynchronous tasks that returns nothing.
 //! See [`with_discarding_spawn_group`](self::with_discarding_spawn_group)
 //! for more information
+//! 
+//! * ``sleep`` similar to ``std::thread::sleep`` but for sleeping in asynchronous environments. See [`sleep`](self::sleep)
+//! for more information
+//! 
+//! * ``block_on`` polls future to finish. See [`block_on`](self::block_on)
+//! for more information
 //!
 //! # Spawning Child Tasks
 //!
@@ -98,7 +104,7 @@
 //! use spawn_groups::Priority;
 //! use spawn_groups::GetType;
 //!
-//! # futures_lite::future::block_on(async move {
+//! # spawn_groups::block_on(async move {
 //! with_spawn_group(i64::TYPE, |mut group| async move {
 //!      for i in 0..=10 {
 //!         group.spawn_task(Priority::default(), async move {
@@ -116,6 +122,10 @@
 //! # });
 //!
 //! ```
+//! 
+//! # Comparisons against existing alternatives
+//! 
+//!
 //!
 //! # Note
 //! * Import ``StreamExt`` trait from ``futures_lite::StreamExt`` or ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
@@ -135,7 +145,11 @@ pub mod spawn_group;
 mod async_runtime;
 mod async_stream;
 mod shared;
+mod sleeper;
+mod executors;
 
+pub use executors::block_on;
+pub use sleeper::sleep;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
 
@@ -167,7 +181,7 @@ use std::marker::PhantomData;
 /// use futures_lite::StreamExt;
 /// use spawn_groups::Priority;
 ///
-/// # futures_lite::future::block_on(async move {
+/// # spawn_groups::block_on(async move {
 /// let final_result = with_spawn_group(i64::TYPE, |mut group| async move {
 ///      for i in 0..=10 {
 ///         group.spawn_task(Priority::default(), async move {
@@ -244,7 +258,7 @@ where
 ///
 /// impl Error for DivisibleByError {}
 ///
-/// # futures_lite::future::block_on(async move {
+/// # spawn_groups::block_on(async move {
 /// let final_results = with_err_spawn_group(u8::TYPE, DivisibleByError::TYPE, |mut group| async move {
 ///     for i in 1..=10 {
 ///         group.spawn_task(Priority::default(), async move {
@@ -291,7 +305,7 @@ pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnTyp
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: std::error::Error + Send + 'static,
+    ErrorType: Send + 'static,
     Fut: Future<Output = ReturnType>,
     Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
     ResultType: Send + 'static,
@@ -324,7 +338,7 @@ where
 /// use futures_lite::StreamExt;
 /// use spawn_groups::Priority;
 ///
-/// # futures_lite::future::block_on(async move {
+/// # spawn_groups::block_on(async move {
 /// with_discarding_spawn_group(|mut group| async move {
 ///     for i in 0..11 {
 ///        group.spawn_task(Priority::default(), async move {

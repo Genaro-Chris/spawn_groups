@@ -1,5 +1,6 @@
 use crate::async_runtime::{executor::Executor, task::Task};
 use crate::async_stream::stream::AsyncStream;
+use crate::executors::{block_on, block_task};
 use crate::shared::{initializible::Initializible, priority::Priority};
 use async_mutex::Mutex;
 use num_cpus;
@@ -8,6 +9,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use threadpool::ThreadPool;
+
 type Lock = Arc<Mutex<Vec<(Priority, Task)>>>;
 
 pub struct RuntimeEngine<ItemType> {
@@ -44,12 +46,36 @@ impl<ItemType> RuntimeEngine<ItemType> {
         self.store(true);
         self.runtime.cancel();
         self.engine.execute(move || {
-            futures_lite::future::block_on(async move {
+            block_on(async move {
                 let mut iter = lock.lock().await;
                 while iter.pop().is_some() {}
             });
         });
         self.stream.cancel_tasks();
+        self.poll();
+    }
+}
+
+impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
+    pub fn wait_for_all_tasks_non_async(&mut self) {
+        *self.count = 0;
+        let lock = self.iter.clone();
+        self.poll();
+        self.runtime.cancel();
+        let engine = self.engine.clone();
+        let store = self.clone();
+        self.engine.execute(|| {
+            block_on(async move {
+                let mut iter = lock.lock().await;
+                iter.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+                store.store(true);
+                while let Some((_, handle)) = iter.pop() {
+                    engine.execute(move || {
+                        block_task(handle);
+                    });
+                }
+            });
+        });
         self.poll();
     }
 }
@@ -75,7 +101,7 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
             self.store(false);
         }
         *self.count += 1;
-        self.stream.increment();
+        let mut stream_clone = self.stream.clone();
         let mut stream = self.stream.clone();
         let task = self.runtime.spawn(async move {
             stream.insert_item(task.await).await;
@@ -83,7 +109,8 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
         });
         let lock = self.iter.clone();
         self.engine.execute(move || {
-            futures_lite::future::block_on(async move {
+            block_on(async move {
+                stream_clone.increment().await;
                 let mut iter = lock.lock().await;
                 iter.push((priority, task));
             });
@@ -101,11 +128,8 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
         iter.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
         self.store(true);
         while let Some((_, handle)) = iter.pop() {
-            if handle.is_completed() {
-                continue;
-            }
             self.engine.execute(move || {
-                futures_lite::future::block_on(handle);
+                block_task(handle);
             });
         }
         self.poll();
@@ -113,14 +137,8 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
-    fn poll(&self) {
+    pub(crate) fn poll(&self) {
         self.engine.join();
-    }
-}
-
-impl<ItemType> Drop for RuntimeEngine<ItemType> {
-    fn drop(&mut self) {
-        self.poll();
     }
 }
 

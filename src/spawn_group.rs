@@ -1,4 +1,4 @@
-use crate::async_stream::stream::{AsyncIterator, AsyncStream};
+use crate::async_stream::stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
 use std::{
     future::Future,
-    ops::{Deref, DerefMut},
     pin::Pin,
 };
 
@@ -100,7 +99,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     ///
     /// # Panics
     /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
-    /// 
+    ///
     /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
     ///
     /// # Parameter
@@ -167,26 +166,11 @@ impl<ValueType: Send> Clone for SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send + 'static> Deref for SpawnGroup<ValueType> {
-    type Target = AsyncIterator<ValueType>;
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl<ValueType: Send + 'static> DerefMut for SpawnGroup<ValueType> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self
-    }
-}
-
 impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
     fn drop(&mut self) {
-        futures_lite::future::block_on(async move {
-            if self.wait_at_drop {
-                self.wait_for_all().await;
-            }
-        });
+        if self.wait_at_drop {
+            self.runtime.wait_for_all_tasks_non_async();
+        }
     }
 }
 
@@ -228,6 +212,12 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
     }
 }
 
+impl <ValueType: Send> SpawnGroup<ValueType> {
+    fn poll_all(&self) {
+        self.runtime.poll();
+    }
+}
+
 impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
@@ -235,6 +225,7 @@ impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
+        self.poll_all();
         let pinned_stream = Pin::new(&mut self.runtime.stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
