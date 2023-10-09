@@ -3,39 +3,42 @@ use crate::pin_future;
 use super::{notifier::Notifier, task::Task, task_queue::TaskQueue};
 
 use cooked_waker::IntoWaker;
-use parking_lot::{Condvar, Mutex};
-use threadpool::ThreadPool;
+use num_cpus::get;
+use parking_lot::{lock_api::MutexGuard, Condvar, Mutex, RawMutex};
+use threadpool::{Builder, ThreadPool};
 
 use std::{
     future::Future,
-    sync::{atomic::AtomicBool, Arc},
-    task::Context,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::{Context, Poll, Waker},
 };
 
 #[derive(Clone)]
 pub struct Executor {
     cancel: Arc<AtomicBool>,
     lock_pair: Arc<(Mutex<bool>, Condvar)>,
-    pool: Arc<ThreadPool>,
+    pool: ThreadPool,
     queue: TaskQueue,
     started: Arc<AtomicBool>,
 }
 
-impl Default for Executor {
-    fn default() -> Self {
-        let thread_count = num_cpus::get();
-        let pool = Arc::new(
-            threadpool::Builder::new()
-                .num_threads(thread_count)
-                .thread_name("Executor".to_owned())
-                .build(),
-        );
-        let lock_pair = Arc::new((Mutex::new(false), Condvar::new()));
-        let result = Self {
+impl Executor {
+    pub(crate) fn new() -> Self {
+        let thread_count: usize = get();
+        let pool: ThreadPool = Builder::new()
+            .num_threads(thread_count)
+            .thread_stack_size(4000)
+            .thread_name("Executor".to_owned())
+            .build();
+        let lock_pair: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
+        let result: Executor = Self {
             cancel: Arc::new(AtomicBool::new(false)),
             lock_pair,
             pool,
-            queue: TaskQueue::new(),
+            queue: TaskQueue::default(),
             started: Arc::new(AtomicBool::new(false)),
         };
         result.start();
@@ -44,24 +47,20 @@ impl Default for Executor {
 }
 impl Executor {
     fn load(&self) -> bool {
-        self.started.load(std::sync::atomic::Ordering::Acquire)
+        self.started.load(Ordering::Acquire)
     }
 
     fn store(&self, val: bool) {
-        self.started
-            .store(val, std::sync::atomic::Ordering::Release);
+        self.started.store(val, Ordering::Release);
     }
 }
 
 impl Executor {
-    pub fn spawn<Fut>(&mut self, task: Fut) -> Task
+    pub(crate) fn spawn<Fut>(&mut self, task: Fut) -> Task
     where
         Fut: Future<Output = ()> + 'static + Send,
     {
-        let task = Task {
-            future: Arc::new(Mutex::new(Box::pin(task))),
-            complete: Arc::new(AtomicBool::new(false)),
-        };
+        let task: Task = Task::new(task);
         self.queue.push(task.clone());
 
         if !self.load() {
@@ -72,40 +71,39 @@ impl Executor {
 
     fn notify(&self) {
         self.store(true);
-        let pair2 = self.lock_pair.clone();
-        threadpool::ThreadPool::new(1).execute(move || {
+        let pair2: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
+        ThreadPool::new(1).execute(move || {
             let (lock, cvar) = &*pair2;
-            let mut started = lock.lock();
+            let mut started: MutexGuard<'_, RawMutex, bool> = lock.lock();
             *started = true;
             cvar.notify_one();
         });
     }
 
-    pub fn cancel(&self) {
-        self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    pub(crate) fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
         *self.lock_pair.0.lock() = false;
         self.store(false);
         while self.queue.clone().pop().is_some() {}
-        self.cancel
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.cancel.store(false, Ordering::SeqCst);
     }
 
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         loop {
-            if !self.cancel.load(std::sync::atomic::Ordering::SeqCst) {
-                let queue = self.queue.clone();
-                let notifier = Arc::new(Notifier::default());
+            if !self.cancel.load(Ordering::SeqCst) {
+                let queue: TaskQueue = self.queue.clone();
+                let notifier: Arc<Notifier> = Arc::new(Notifier::default());
                 while let Some(task) = self.queue.pop() {
                     if !task.is_completed() {
-                        let mut queue = queue.clone();
-                        let waker = notifier.clone().into_waker();
-                        let task_clone = task.clone();
+                        let mut queue: TaskQueue = queue.clone();
+                        let waker: Waker = notifier.clone().into_waker();
+                        let task_clone: Task = task.clone();
                         self.pool.execute(move || {
                             pin_future!(task);
-                            let mut cx = Context::from_waker(&waker);
+                            let mut cx: Context<'_> = Context::from_waker(&waker);
                             match task.as_mut().poll(&mut cx) {
-                                std::task::Poll::Ready(_) => {}
-                                std::task::Poll::Pending => {
+                                Poll::Ready(_) => {}
+                                Poll::Pending => {
                                     queue.push(task_clone);
                                 }
                             }
@@ -124,12 +122,12 @@ impl Executor {
         self.pool.join();
     }
 
-    pub fn start(&self) {
-        let lock_pair = self.lock_pair.clone();
-        let mut executor = self.clone();
-        threadpool::ThreadPool::new(1).execute(move || {
+    pub(crate) fn start(&self) {
+        let lock_pair: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
+        let mut executor: Executor = self.clone();
+        ThreadPool::new(1).execute(move || {
             let (lock, cvar) = &*lock_pair;
-            let mut started = lock.lock();
+            let mut started: MutexGuard<'_, RawMutex, bool> = lock.lock();
             while !*started {
                 cvar.wait(&mut started);
             }

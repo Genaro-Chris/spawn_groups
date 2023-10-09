@@ -2,13 +2,24 @@ mod delay;
 
 use std::time::Duration;
 
-use crate::sleeper::delay::sleep_for;
+use self::delay::Delay;
 
 /// Sleeps for the specified amount of time.
 ///
 /// This function might sleep for slightly longer than the specified duration but never less.
 ///
 /// This function is an async version of ``std::thread::sleep``.
-pub async fn sleep(duration: Duration) {
-    sleep_for(duration).await
+///
+/// Example
+///
+/// ```rust
+/// use spawn_groups::{block_on, sleep};
+/// use std::time::Duration;
+///
+/// block_on(async {
+///     sleep(Duration::from_secs(2)).await;
+/// });
+/// ```
+pub fn sleep(duration: Duration) -> Delay {
+    Delay::new(duration)
 }

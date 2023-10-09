@@ -1,6 +1,6 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc, task::Waker};
 
-use crate::async_runtime::task::Task;
+use crate::async_runtime::{notifier::Notifier, task::Task};
 
 mod local_executor;
 mod task_executor;
@@ -17,13 +17,17 @@ mod task_executor;
 /// ```
 ///
 pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
-    let (notifier, waker) =
-        local_executor::WAKER_PAIR.with(|waker| (waker.0.clone(), waker.1.clone()));
-    local_executor::block_future(future, notifier, waker)
+    local_executor::WAKER_PAIR.with(|waker| {
+        let notifier: Arc<Notifier> = waker.0.clone();
+        let waker: Waker = waker.1.clone();
+        local_executor::block_future(future, notifier, &waker)
+    })
 }
 
-pub fn block_task(task: Task) {
-    let (notifier, waker) =
-        local_executor::WAKER_PAIR.with(|waker| (waker.0.clone(), waker.1.clone()));
-    task_executor::block_task(task, notifier, waker)
+pub(crate) fn block_task(task: Task) {
+    task_executor::WAKER_PAIR.with(|waker| {
+        let notifier: Arc<Notifier> = waker.0.clone();
+        let waker: Waker = waker.1.clone();
+        task_executor::block_task(task, notifier, &waker)
+    });
 }

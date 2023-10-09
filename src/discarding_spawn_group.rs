@@ -18,6 +18,7 @@ use std::future::Future;
 /// Child tasks spawned to a spawn group execute concurrently, and may be scheduled in
 /// any order.
 ///
+#[derive(Clone)]
 pub struct DiscardingSpawnGroup {
     /// A field that indicates if the spawn group has been cancelled
     pub is_cancelled: bool,
@@ -86,16 +87,6 @@ impl DiscardingSpawnGroup {
             return true;
         }
         false
-    }
-}
-
-impl Clone for DiscardingSpawnGroup {
-    fn clone(&self) -> Self {
-        Self {
-            is_cancelled: self.is_cancelled,
-            runtime: self.runtime.clone(),
-            wait_at_drop: self.wait_at_drop,
-        }
     }
 }
 

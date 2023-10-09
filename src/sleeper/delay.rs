@@ -1,15 +1,19 @@
 use std::{
     future::Future,
+    pin::Pin,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Delay {
     duration: Duration,
     now: Instant,
 }
 
 impl Delay {
-    pub fn new(duration: Duration) -> Self {
+    pub(crate) fn new(duration: Duration) -> Self {
         Delay {
             duration,
             now: Instant::now(),
@@ -17,21 +21,14 @@ impl Delay {
     }
 }
 
-pub(crate) fn sleep_for(duration: Duration) -> Delay {
-    Delay::new(duration)
-}
-
 impl Future for Delay {
     type Output = ();
 
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.now.elapsed() >= self.duration {
-            return std::task::Poll::Ready(());
+            return Poll::Ready(());
         }
         cx.waker().wake_by_ref();
-        std::task::Poll::Pending
+        Poll::Pending
     }
 }

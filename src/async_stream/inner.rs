@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 pub(crate) struct Inner<T> {
     pub(crate) buffer: VecDeque<T>,
-    pub(crate) count: usize,
-    pub(crate) task_count: usize,
-    pub(crate) cancelled: bool,
+    count: usize,
+    task_count: usize,
+    cancelled: bool,
 }
 
 impl<ItemType> Inner<ItemType> {
@@ -14,6 +14,20 @@ impl<ItemType> Inner<ItemType> {
             count: 0,
             task_count: 0,
         }
+    }
+
+    pub(crate) fn increment_count(&mut self) {
+        self.count += 1;
+    }
+
+    pub(crate) fn decrement_count(&mut self) {
+        if self.count > 0 {
+            self.count -= 1;
+        }
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.count
     }
 
     pub(crate) fn task_count(&self) -> usize {
@@ -28,6 +42,10 @@ impl<ItemType> Inner<ItemType> {
         if self.task_count > 0 {
             self.task_count -= 1;
         }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 
     pub(crate) fn cancel_tasks(&mut self) {

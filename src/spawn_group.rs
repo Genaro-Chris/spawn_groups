@@ -5,10 +5,8 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
-use std::{
-    future::Future,
-    pin::Pin,
-};
+use std::task::{Context, Poll};
+use std::{future::Future, pin::Pin};
 
 /// Spawn Group
 ///
@@ -25,13 +23,15 @@ use std::{
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-///
+
+#[derive(Clone)]
 pub struct SpawnGroup<ValueType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     wait_at_drop: bool,
     count: Box<usize>,
     runtime: RuntimeEngine<ValueType>,
+    polled: bool,
 }
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
@@ -95,50 +95,6 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
 }
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
-    /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
-    ///
-    /// # Panics
-    /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
-    ///
-    /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
-    ///
-    /// # Parameter
-    /// * `of_count`: The number of running child tasks to wait for their results to return
-    ///
-    /// # Returns
-    /// Returns a vector of length `of_count` elements from the spawn group instance
-    pub async fn get_chunks(&self, of_count: usize) -> Vec<ValueType> {
-        if of_count == 0 {
-            return vec![];
-        }
-        let buffer_count = self.runtime.stream.buffer_count().await;
-        if buffer_count == of_count {
-            let mut count = of_count;
-            let mut results = vec![];
-            while count != 0 {
-                if let Some(result) = self.runtime.stream.clone().next().await {
-                    results.push(result);
-                    count -= 1;
-                }
-            }
-            return results;
-        }
-        if of_count > *self.count {
-            panic!("The argument supplied cannot be greater than the number of spawned child tasks")
-        }
-        let mut count = of_count;
-        let mut results = vec![];
-        while count != 0 {
-            if let Some(result) = self.runtime.stream.clone().next().await {
-                results.push(result);
-                count -= 1;
-            }
-        }
-        results
-    }
-}
-
-impl<ValueType: Send> SpawnGroup<ValueType> {
     /// A Boolean value that indicates whether the group has any remaining tasks.
     ///
     /// At the start of the body of a ``with_spawn_group()`` call, , or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
@@ -155,14 +111,48 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> Clone for SpawnGroup<ValueType> {
-    fn clone(&self) -> Self {
-        Self {
-            runtime: self.runtime.clone(),
-            is_cancelled: self.is_cancelled,
-            count: self.count.clone(),
-            wait_at_drop: self.wait_at_drop,
+impl<ValueType: Send> SpawnGroup<ValueType> {
+    /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
+    ///
+    /// # Panics
+    /// If the `of_count` parameter is larger than the number of already spawned child tasks, this method panics
+    ///
+    /// Remember whenever you call either ``wait_for_all`` or ``cancel_all`` methods, the child tasks' count reverts back to zero
+    ///
+    /// # Parameter
+    /// * `of_count`: The number of running child tasks to wait for their results to return
+    ///
+    /// # Returns
+    /// Returns a vector of length `of_count` elements from the spawn group instance
+    #[deprecated(since = "2.0.0", note = "Buggy")]
+    pub async fn get_chunks(&self, of_count: usize) -> Vec<ValueType> {
+        if of_count == 0 {
+            return vec![];
         }
+        let buffer_count = self.runtime.stream.buffer_count().await;
+        if buffer_count == of_count {
+            let mut count: usize = of_count;
+            let mut results: Vec<ValueType> = vec![];
+            while count != 0 {
+                if let Some(result) = self.runtime.stream.clone().next().await {
+                    results.push(result);
+                    count -= 1;
+                }
+            }
+            return results;
+        }
+        if of_count > *self.count {
+            panic!("The argument supplied cannot be greater than the number of spawned child tasks")
+        }
+        let mut count: usize = of_count;
+        let mut results: Vec<ValueType> = vec![];
+        while count != 0 {
+            if let Some(result) = self.runtime.stream.clone().next().await {
+                results.push(result);
+                count -= 1;
+            }
+        }
+        results
     }
 }
 
@@ -181,6 +171,7 @@ impl<ValueType: Send> Initializible for SpawnGroup<ValueType> {
             is_cancelled: false,
             count: Box::new(0),
             wait_at_drop: true,
+            polled: false,
         }
     }
 }
@@ -192,6 +183,7 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
     where
         F: Future<Output = Self::Result> + Send + 'static,
     {
+        self.polled = false;
         *self.count += 1;
         self.runtime.write_task(priority, closure);
     }
@@ -212,7 +204,7 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
     }
 }
 
-impl <ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType: Send> SpawnGroup<ValueType> {
     fn poll_all(&self) {
         self.runtime.poll();
     }
@@ -221,12 +213,12 @@ impl <ValueType: Send> SpawnGroup<ValueType> {
 impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.poll_all();
-        let pinned_stream = Pin::new(&mut self.runtime.stream);
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if !self.polled {
+            self.poll_all();
+            self.polled = true;
+        }
+        let pinned_stream: Pin<&mut AsyncStream<ValueType>> = Pin::new(&mut self.runtime.stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
 }

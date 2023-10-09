@@ -1,8 +1,11 @@
-use parking_lot::Mutex;
+use parking_lot::{lock_api::MutexGuard, Mutex, RawMutex};
 use std::{
     future::Future,
     pin::Pin,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::Poll,
 };
 
@@ -15,13 +18,19 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn is_completed(&self) -> bool {
-        self.complete.load(std::sync::atomic::Ordering::Acquire)
+    pub(crate) fn new<Fut: Future<Output = ()> + Send + 'static>(fut: Fut) -> Self {
+        Self {
+            future: Arc::new(Mutex::new(Box::pin(fut))),
+            complete: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(crate) fn is_completed(&self) -> bool {
+        self.complete.load(Ordering::Acquire)
     }
 
     fn complete(&self) {
-        self.complete
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.complete.store(true, Ordering::Release);
     }
 }
 
@@ -32,7 +41,8 @@ impl Future for Task {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         let task = self.clone();
-        let mut future = task.future.lock();
+        let mut future: MutexGuard<'_, RawMutex, Pin<Box<dyn Future<Output = ()> + Send>>> =
+            task.future.lock();
         return match future.as_mut().poll(cx) {
             Poll::Ready(_) => {
                 self.complete();

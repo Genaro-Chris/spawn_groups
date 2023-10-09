@@ -9,19 +9,21 @@ use cooked_waker::IntoWaker;
 use crate::{async_runtime::notifier::Notifier, pin_future};
 
 thread_local! {
-    pub static WAKER_PAIR: (Arc<Notifier>, Waker) = {
+    pub(crate) static WAKER_PAIR: (Arc<Notifier>, Waker) = {
         let notifier = Arc::new(Notifier::default());
-        (notifier.clone(), notifier.into_waker())
+        let waker = notifier.clone().into_waker().clone();
+        (notifier, waker)
     };
 }
 
+#[inline]
 pub(crate) fn block_future<Fut: Future>(
     future: Fut,
     notifier: Arc<Notifier>,
-    waker: Waker,
+    waker: &Waker,
 ) -> Fut::Output {
+    let mut context: Context<'_> = Context::from_waker(waker);
     pin_future!(future);
-    let mut context = Context::from_waker(&waker);
     loop {
         match future.as_mut().poll(&mut context) {
             std::task::Poll::Ready(output) => return output,

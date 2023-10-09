@@ -4,12 +4,13 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_mutex::Mutex;
+use async_mutex::{Mutex, MutexGuard};
 use futures_lite::{Stream, StreamExt};
 
 use crate::executors::block_on;
 
 use super::inner::Inner;
+
 pub struct AsyncStream<ItemType> {
     inner: Arc<Mutex<Inner<ItemType>>>,
     started: bool,
@@ -23,23 +24,23 @@ impl<ItemType> AsyncStream<ItemType> {
 }
 
 impl<ItemType> AsyncStream<ItemType> {
+    pub(crate) async fn buffer_count(&self) -> usize {
+        self.inner.lock().await.buffer.len()
+    }
+}
+
+impl<ItemType> AsyncStream<ItemType> {
     pub(crate) async fn increment(&mut self) {
-        let mut inner_lock = self.inner.lock().await;
-        inner_lock.count += 1;
+        let mut inner_lock: MutexGuard<'_, Inner<ItemType>> = self.inner.lock().await;
+        inner_lock.increment_count();
         inner_lock.increment_task_count();
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub async fn first(&self) -> Option<ItemType> {
-        let mut cloned = self.clone();
+    pub(crate) async fn first(&self) -> Option<ItemType> {
+        let mut cloned: AsyncStream<ItemType> = self.clone();
         cloned.next().await
-    }
-}
-
-impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn buffer_count(&self) -> usize {
-        self.inner.lock().await.buffer.len()
     }
 }
 
@@ -82,16 +83,16 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         block_on(async move {
-            let mut inner_lock = self.inner.lock().await;
-            if inner_lock.cancelled && inner_lock.buffer.is_empty() {
+            let mut inner_lock: MutexGuard<'_, Inner<ItemType>> = self.inner.lock().await;
+            if inner_lock.is_cancelled() && inner_lock.buffer.is_empty() {
                 return Poll::Ready(None);
             }
-            if inner_lock.count != 0 {
+            if inner_lock.count() != 0 {
                 let Some(value) = inner_lock.buffer.pop_front() else {
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 };
-                inner_lock.count -= 1;
+                inner_lock.decrement_count();
                 return Poll::Ready(Some(value));
             }
             Poll::Ready(None)

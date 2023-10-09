@@ -94,10 +94,6 @@
 //! which means that you can await the result of each child task asynchronously and with the help of ``StreamExt`` trait, one can call methods such as ``next``,
 //! ``map``, ``filter_map``, ``fold`` and so much more.
 //!
-//! If you want a specific number of results from the spawned child tasks,
-//! consider calling ``get_chunks`` method instead of iterating over
-//! the spawn group instance which waits for all child tasks to finish their execution
-//!
 //! ```rust
 //! use spawn_groups::with_spawn_group;
 //! use futures_lite::StreamExt;
@@ -147,9 +143,11 @@ mod async_stream;
 mod shared;
 mod sleeper;
 mod executors;
+mod yield_now;
 
 pub use executors::block_on;
 pub use sleeper::sleep;
+pub use yield_now::yield_now;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
 

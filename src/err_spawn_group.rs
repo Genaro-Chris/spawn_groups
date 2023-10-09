@@ -5,6 +5,7 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
+use std::task::{Context, Poll};
 use std::{future::Future, pin::Pin};
 
 /// Err Spawn Group
@@ -22,13 +23,15 @@ use std::{future::Future, pin::Pin};
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-///
+
+#[derive(Clone)]
 pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     count: Box<usize>,
     runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
     wait_at_drop: bool,
+    polled: bool,
 }
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
@@ -126,14 +129,15 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     ///
     /// # Returns
     /// Returns a vector of length `of_count` elements from the spawn group instance
+    #[deprecated(since = "2.0.0", note = "Buggy")]
     pub async fn get_chunks(&self, of_count: usize) -> Vec<Result<ValueType, ErrorType>> {
         if of_count == 0 {
             return vec![];
         }
-        let buffer_count = self.runtime.stream.buffer_count().await;
+        let buffer_count: usize = self.runtime.stream.buffer_count().await;
         if buffer_count == of_count {
-            let mut count = of_count;
-            let mut results = vec![];
+            let mut count: usize = of_count;
+            let mut results: Vec<Result<ValueType, ErrorType>> = vec![];
             while count != 0 {
                 if let Some(result) = self.runtime.stream.clone().next().await {
                     results.push(result);
@@ -145,8 +149,8 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
         if of_count > *self.count {
             panic!("The argument supplied cannot be greater than the number of spawned child tasks")
         }
-        let mut count = of_count;
-        let mut results = vec![];
+        let mut count: usize = of_count;
+        let mut results: Vec<Result<ValueType, ErrorType>> = vec![];
         while count != 0 {
             if let Some(result) = self.runtime.stream.clone().next().await {
                 results.push(result);
@@ -157,20 +161,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> Clone for ErrSpawnGroup<ValueType, ErrorType> {
-    fn clone(&self) -> Self {
-        Self {
-            runtime: self.runtime.clone(),
-            is_cancelled: self.is_cancelled,
-            count: self.count.clone(),
-            wait_at_drop: self.wait_at_drop,
-        }
-    }
-}
-
-impl<ValueType: Send, ErrorType: Send + 'static> Drop
-    for ErrSpawnGroup<ValueType, ErrorType>
-{
+impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueType, ErrorType> {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks_non_async();
@@ -178,15 +169,14 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> Initializible
-    for ErrSpawnGroup<ValueType, ErrorType>
-{
+impl<ValueType: Send, ErrorType: Send> Initializible for ErrSpawnGroup<ValueType, ErrorType> {
     fn init() -> Self {
         ErrSpawnGroup::<ValueType, ErrorType> {
             count: Box::new(0),
             is_cancelled: false,
             runtime: RuntimeEngine::init(),
             wait_at_drop: true,
+            polled: false,
         }
     }
 }
@@ -200,6 +190,7 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
     where
         F: Future<Output = Self::Result> + Send + 'static,
     {
+        self.polled = false;
         *self.count += 1;
         self.runtime.write_task(priority, closure);
     }
@@ -220,7 +211,7 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
     }
 }
 
-impl <ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     fn poll_all(&self) {
         self.runtime.poll();
     }
@@ -229,12 +220,12 @@ impl <ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
 impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
     type Item = Result<ValueType, ErrorType>;
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.poll_all();
-        let pinned_stream = Pin::new(&mut self.runtime.stream);
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if !self.polled {
+            self.poll_all();
+            self.polled = true;
+        }
+        let pinned_stream: Pin<&mut AsyncStream<Result<ValueType, ErrorType>>> = Pin::new(&mut self.runtime.stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
 }
