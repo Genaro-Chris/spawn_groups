@@ -27,7 +27,6 @@ impl<ItemType> Initializible for RuntimeEngine<ItemType> {
         let thread_count: usize = get();
         let engine: ThreadPool = Builder::new()
             .num_threads(thread_count)
-            .thread_stack_size(8000)
             .thread_name("RuntimeEngine".to_owned())
             .build();
         Self {
