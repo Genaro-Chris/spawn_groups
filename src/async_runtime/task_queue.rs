@@ -4,7 +4,7 @@ use futures_lite::StreamExt;
 
 #[derive(Clone, Default)]
 pub struct TaskQueue {
-    pub(crate) stream: AsyncStream<Task>,
+    stream: AsyncStream<Task>,
 }
 
 impl TaskQueue {

@@ -2,7 +2,7 @@ use crate::yield_now::yielder::Yielder;
 
 mod yielder;
 
-/// Wakes the current task and returns [`Poll::Pending`] once.
+/// Wakes the current task and returns [`std::task::Poll::Pending`] once.
 ///
 /// This function is useful when we want to cooperatively give time to the task executor. It is
 /// generally a good idea to yield inside loops because that way we make sure long-running tasks

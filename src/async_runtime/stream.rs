@@ -11,7 +11,7 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct AsyncStream<ItemType> {
+pub(super) struct AsyncStream<ItemType> {
     count: Arc<AtomicUsize>,
     inner: Arc<Mutex<Inner<ItemType>>>,
     started: bool,

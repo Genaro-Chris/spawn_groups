@@ -1,7 +1,7 @@
 # spawn_groups
 
 [![rustc](https://img.shields.io/badge/rustc-1.70+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![crate](https://img.shields.io/docsrs/spawn_groups)](https://docs.rs/spawn_groups/0.1.0)
+[![crate](https://img.shields.io/docsrs/spawn_groups)](https://docs.rs/spawn_groups/1.0.0)
 [![github](https://img.shields.io/badge/spawn_group-grey?logo=Github&logoColor=white&label=github&labelColor=black)](https://github.com/Genaro-Chris/spawn_groups)
 [![license](https://img.shields.io/github/license/Genaro-Chris/spawn_groups)]()
 
@@ -22,38 +22,59 @@ cargo add spawn_groups
 ## Example
 
 ```rust
-use async_std::io::{self};
-use async_std::net::{TcpListener, TcpStream};
-use async_std::prelude::*;
+use async_std::stream::StreamExt;
 use spawn_groups::{with_err_spawn_group, GetType, Priority};
+use std::time::Instant;
+use surf::{Error, Client, http::Mime, StatusCode};
 
-async fn process(stream: TcpStream) -> io::Result<()> {
-    println!("Accepted from local: {}", stream.local_addr()?);
-    println!("Accepted from: {}", stream.peer_addr()?);
-    let mut reader = stream.clone();
-    let mut writer = stream;
-    io::copy(&mut reader, &mut writer).await?;
-    Ok(())
+async fn get_mimetype<AsStr: AsRef<str>>(url: AsStr, client: Client) -> Option<Mime> {
+    let Ok(resp) = client.get(url).send().await else {
+        return None;
+    };
+    resp.content_type()
 }
 
-type Void = ();
-
 #[async_std::main]
-async fn main() -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    println!("Listening on {}", listener.local_addr()?);
-    with_err_spawn_group(Void::TYPE, io::Error::TYPE, |mut group| async move {
-        let mut incoming = listener.incoming();
-        while let Some(stream) = incoming.next().await {
-            let Ok(stream) = stream else {
-                return Err(stream.expect_err("Expected an error"));
-            };
-            group.spawn_task(Priority::default(), async move { process(stream).await });
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = surf::Client::new();
+    let urls = [
+        "https://www.google.com",
+        "https://www.bing.com",
+        "https://www.yandex.com",
+        "https://www.duckduckgo.com",
+        "https://www.wikipedia.org",
+        "https://www.whatsapp.com",
+        "https://www.yahoo.com",
+        "https://www.amazon.com",
+        "https://www.baidu.com",
+        "https://www.youtube.com",
+        "https://facebook.com",
+        "https://www.instagram.com",
+        "https://tiktok.com",
+    ];
+    with_err_spawn_group(String::TYPE, Error::TYPE, move |mut eg| async move {
+        println!("About to start");
+        let now = Instant::now();
+        for url in urls {
+            let client = client.clone();
+            eg.spawn_task(Priority::default(), async move {
+                if let Some(mimetype) = get_mimetype(url, client).await {
+                    return Ok(format!("{url}: {}", mimetype));
+                }
+                Err(Error::from_str(StatusCode::ExpectationFailed, format!("No content type found for {}", url)))
+            })
         }
-        Ok(())
-    })
-    .await?;
 
+        while let Some(result) = eg.next().await {
+            if let Err(error) = result {
+                eprintln!("{}", error);
+            } else {
+                println!("{}", result.unwrap());
+            }
+        }
+        println!("It took {} nanoseconds", now.elapsed().as_nanos());
+    })
+    .await;
     Ok(())
 }
 ```
@@ -63,4 +84,8 @@ async fn main() -> io::Result<()> {
 For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0)
 
 
-# Comparisons against existing alternatives
+# Comparison against existing alternatives
+
+* [`JoinSet`](): Like this alternative, both await the completion of some or all of the child tasks, spawn child tasks in an unordered manner and the result of their child tasks will be returned in the order they complete and also cancel or abort all child tasks. Unlike the `Joinset`, you can explicitly await for all the child task to finish their execution. The Spawn group option provides a scope for the child tasks to execute.
+
+* [`FuturesUnordered`]() Like this alternative, both spawn child tasks in an unordered manner, but it doesn't immediately start running the spawned child tasks until it is being polled. It also doesn't provide a way to cancel all child tasks. 

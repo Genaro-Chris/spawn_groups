@@ -3,7 +3,6 @@ use crate::pin_future;
 use super::{notifier::Notifier, task::Task, task_queue::TaskQueue};
 
 use cooked_waker::IntoWaker;
-use num_cpus::get;
 use parking_lot::{lock_api::MutexGuard, Condvar, Mutex, RawMutex};
 use threadpool::{Builder, ThreadPool};
 
@@ -27,17 +26,10 @@ pub struct Executor {
 
 impl Executor {
     pub(crate) fn new() -> Self {
-        let thread_count: usize = get();
-        let pool: ThreadPool = Builder::new()
-            .num_threads(thread_count)
-            .thread_stack_size(4000)
-            .thread_name("Executor".to_owned())
-            .build();
-        let lock_pair: Arc<(Mutex<bool>, Condvar)> = Arc::new((Mutex::new(false), Condvar::new()));
         let result: Executor = Self {
             cancel: Arc::new(AtomicBool::new(false)),
-            lock_pair,
-            pool,
+            lock_pair: Arc::new((Mutex::new(false), Condvar::new())),
+            pool: Builder::new().thread_name("Executor".to_owned()).build(),
             queue: TaskQueue::default(),
             started: Arc::new(AtomicBool::new(false)),
         };
@@ -91,18 +83,18 @@ impl Executor {
     pub(crate) fn run(&mut self) {
         loop {
             if !self.cancel.load(Ordering::SeqCst) {
-                let queue: TaskQueue = self.queue.clone();
-                let notifier: Arc<Notifier> = Arc::new(Notifier::default());
                 while let Some(task) = self.queue.pop() {
                     if !task.is_completed() {
-                        let mut queue: TaskQueue = queue.clone();
-                        let waker: Waker = notifier.clone().into_waker();
-                        let task_clone: Task = task.clone();
+                        let queue: TaskQueue = self.queue.clone();
+                        let notifier: Arc<Notifier> = Arc::new(Notifier::default());
                         self.pool.execute(move || {
+                            let mut queue: TaskQueue = queue.clone();
+                            let waker: Waker = notifier.clone().into_waker();
+                            let task_clone: Task = task.clone();
                             pin_future!(task);
                             let mut cx: Context<'_> = Context::from_waker(&waker);
                             match task.as_mut().poll(&mut cx) {
-                                Poll::Ready(_) => {}
+                                Poll::Ready(()) => {}
                                 Poll::Pending => {
                                     queue.push(task_clone);
                                 }
@@ -111,8 +103,8 @@ impl Executor {
                     }
                 }
             } else {
-                while self.queue.pop().is_some() {}
                 self.poll_all();
+                while self.queue.pop().is_some() {}
                 return;
             }
         }

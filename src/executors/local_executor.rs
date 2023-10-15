@@ -11,7 +11,7 @@ use crate::{async_runtime::notifier::Notifier, pin_future};
 thread_local! {
     pub(crate) static WAKER_PAIR: (Arc<Notifier>, Waker) = {
         let notifier = Arc::new(Notifier::default());
-        let waker = notifier.clone().into_waker().clone();
+        let waker = notifier.clone().into_waker();
         (notifier, waker)
     };
 }

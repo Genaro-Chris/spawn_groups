@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-pub(crate) struct Inner<T> {
+pub(super) struct Inner<T> {
     pub(crate) buffer: VecDeque<T>,
     count: usize,
     task_count: usize,
@@ -7,7 +7,7 @@ pub(crate) struct Inner<T> {
 }
 
 impl<ItemType> Inner<ItemType> {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             buffer: VecDeque::new(),
             cancelled: false,

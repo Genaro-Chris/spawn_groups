@@ -1,4 +1,4 @@
-use parking_lot::{lock_api::MutexGuard, Mutex, RawMutex};
+use parking_lot::Mutex;
 use std::{
     future::Future,
     pin::Pin,
@@ -40,11 +40,8 @@ impl Future for Task {
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let task = self.clone();
-        let mut future: MutexGuard<'_, RawMutex, Pin<Box<dyn Future<Output = ()> + Send>>> =
-            task.future.lock();
-        return match future.as_mut().poll(cx) {
-            Poll::Ready(_) => {
+        match self.future.lock().as_mut().poll(cx) {
+            Poll::Ready(()) => {
                 self.complete();
                 Poll::Ready(())
             }
@@ -52,6 +49,6 @@ impl Future for Task {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-        };
+        }
     }
 }

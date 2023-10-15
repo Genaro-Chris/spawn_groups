@@ -5,6 +5,10 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::task::{Context, Poll};
 use std::{future::Future, pin::Pin};
 
@@ -28,7 +32,7 @@ use std::{future::Future, pin::Pin};
 pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
-    count: Box<usize>,
+    count: Arc<AtomicUsize>,
     runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
     wait_at_drop: bool,
     polled: bool,
@@ -88,7 +92,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Returns the first element of the stream, or None if it is empty.
     pub async fn first(&self) -> Option<<ErrSpawnGroup<ValueType, ErrorType> as Shared>::Result> {
-        self.runtime.stream.first().await
+        self.runtime.stream().first().await
     }
 }
 
@@ -96,6 +100,20 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
         self.wait().await;
+    }
+}
+
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+    fn increment_count(&self) {
+        self.count.fetch_add(1, Ordering::Acquire);
+    }
+
+    fn count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+
+    fn decrement_count_to_zero(&self) {
+        self.count.store(0, Ordering::Release);
     }
 }
 
@@ -109,7 +127,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if *self.count == 0 || self.runtime.stream.clone().task_count() == 0 {
+        if self.count() == 0 || self.runtime.stream().task_count() == 0 {
             return true;
         }
         false
@@ -134,25 +152,25 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
         if of_count == 0 {
             return vec![];
         }
-        let buffer_count: usize = self.runtime.stream.buffer_count().await;
+        let buffer_count: usize = self.runtime.stream().buffer_count().await;
         if buffer_count == of_count {
             let mut count: usize = of_count;
             let mut results: Vec<Result<ValueType, ErrorType>> = vec![];
             while count != 0 {
-                if let Some(result) = self.runtime.stream.clone().next().await {
+                if let Some(result) = self.runtime.stream().next().await {
                     results.push(result);
                     count -= 1;
                 }
             }
             return results;
         }
-        if of_count > *self.count {
+        if of_count > self.count() {
             panic!("The argument supplied cannot be greater than the number of spawned child tasks")
         }
         let mut count: usize = of_count;
         let mut results: Vec<Result<ValueType, ErrorType>> = vec![];
         while count != 0 {
-            if let Some(result) = self.runtime.stream.clone().next().await {
+            if let Some(result) = self.runtime.stream().next().await {
                 results.push(result);
                 count -= 1;
             }
@@ -172,7 +190,7 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueTyp
 impl<ValueType: Send, ErrorType: Send> Initializible for ErrSpawnGroup<ValueType, ErrorType> {
     fn init() -> Self {
         ErrSpawnGroup::<ValueType, ErrorType> {
-            count: Box::new(0),
+            count: Arc::new(AtomicUsize::new(0)),
             is_cancelled: false,
             runtime: RuntimeEngine::init(),
             wait_at_drop: true,
@@ -191,14 +209,14 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
         F: Future<Output = Self::Result> + Send + 'static,
     {
         self.polled = false;
-        *self.count += 1;
+        self.increment_count();
         self.runtime.write_task(priority, closure);
     }
 
     fn cancel_all_tasks(&mut self) {
         self.runtime.cancel();
         self.is_cancelled = true;
-        *self.count = 0;
+        self.decrement_count_to_zero();
     }
 
     fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
@@ -225,7 +243,9 @@ impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, Error
             self.poll_all();
             self.polled = true;
         }
-        let pinned_stream: Pin<&mut AsyncStream<Result<ValueType, ErrorType>>> = Pin::new(&mut self.runtime.stream);
+        let mut stream: AsyncStream<Result<ValueType, ErrorType>> = self.runtime.stream();
+        let pinned_stream: Pin<&mut AsyncStream<Result<ValueType, ErrorType>>> =
+            Pin::new(&mut stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
 }
@@ -236,6 +256,6 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Waitable
 {
     async fn wait(&mut self) {
         self.runtime.wait_for_all_tasks().await;
-        *self.count = 0;
+        self.decrement_count_to_zero();
     }
 }

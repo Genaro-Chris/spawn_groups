@@ -5,6 +5,10 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::task::{Context, Poll};
 use std::{future::Future, pin::Pin};
 
@@ -29,7 +33,7 @@ pub struct SpawnGroup<ValueType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     wait_at_drop: bool,
-    count: Box<usize>,
+    count: Arc<AtomicUsize>,
     runtime: RuntimeEngine<ValueType>,
     polled: bool,
 }
@@ -83,7 +87,7 @@ impl<ValueType: Send + 'static> SpawnGroup<ValueType> {
 impl<ValueType: Send> SpawnGroup<ValueType> {
     /// Returns the first element of the stream, or None if it is empty.
     pub async fn first(&self) -> Option<ValueType> {
-        self.runtime.stream.first().await
+        self.runtime.stream().first().await
     }
 }
 
@@ -91,6 +95,20 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
         self.wait().await;
+    }
+}
+
+impl<ValueType: Send> SpawnGroup<ValueType> {
+    fn increment_count(&self) {
+        self.count.fetch_add(1, Ordering::Acquire);
+    }
+
+    fn count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+
+    fn decrement_count_to_zero(&self) {
+        self.count.store(0, Ordering::Release);
     }
 }
 
@@ -104,7 +122,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if *self.count == 0 || self.runtime.stream.clone().task_count() == 0 {
+        if self.count() == 0 || self.runtime.stream().task_count() == 0 {
             return true;
         }
         false
@@ -129,25 +147,25 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
         if of_count == 0 {
             return vec![];
         }
-        let buffer_count = self.runtime.stream.buffer_count().await;
+        let buffer_count = self.runtime.stream().buffer_count().await;
         if buffer_count == of_count {
             let mut count: usize = of_count;
             let mut results: Vec<ValueType> = vec![];
             while count != 0 {
-                if let Some(result) = self.runtime.stream.clone().next().await {
+                if let Some(result) = self.runtime.stream().next().await {
                     results.push(result);
                     count -= 1;
                 }
             }
             return results;
         }
-        if of_count > *self.count {
+        if of_count > self.count() {
             panic!("The argument supplied cannot be greater than the number of spawned child tasks")
         }
         let mut count: usize = of_count;
         let mut results: Vec<ValueType> = vec![];
         while count != 0 {
-            if let Some(result) = self.runtime.stream.clone().next().await {
+            if let Some(result) = self.runtime.stream().next().await {
                 results.push(result);
                 count -= 1;
             }
@@ -169,7 +187,7 @@ impl<ValueType: Send> Initializible for SpawnGroup<ValueType> {
         SpawnGroup {
             runtime: RuntimeEngine::init(),
             is_cancelled: false,
-            count: Box::new(0),
+            count: Arc::new(AtomicUsize::new(0)),
             wait_at_drop: true,
             polled: false,
         }
@@ -184,14 +202,14 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
         F: Future<Output = Self::Result> + Send + 'static,
     {
         self.polled = false;
-        *self.count += 1;
+        self.increment_count();
         self.runtime.write_task(priority, closure);
     }
 
     fn cancel_all_tasks(&mut self) {
         self.runtime.cancel();
         self.is_cancelled = true;
-        *self.count = 0;
+        self.decrement_count_to_zero();
     }
 
     fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
@@ -218,7 +236,8 @@ impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
             self.poll_all();
             self.polled = true;
         }
-        let pinned_stream: Pin<&mut AsyncStream<ValueType>> = Pin::new(&mut self.runtime.stream);
+        let mut stream: AsyncStream<ValueType> = self.runtime.stream();
+        let pinned_stream: Pin<&mut AsyncStream<ValueType>> = Pin::new(&mut stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
     }
 }
@@ -227,6 +246,6 @@ impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
 impl<ValueType: Send + 'static> Waitable for SpawnGroup<ValueType> {
     async fn wait(&mut self) {
         self.runtime.wait_for_all_tasks().await;
-        *self.count = 0;
+        self.decrement_count_to_zero();
     }
 }
