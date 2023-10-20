@@ -8,7 +8,7 @@ pub struct TaskQueue {
 }
 
 impl TaskQueue {
-    pub(crate) fn push(&mut self, task: Task) {
+    pub(crate) fn push(&self, task: Task) {
         self.stream.insert_item(task);
     }
 

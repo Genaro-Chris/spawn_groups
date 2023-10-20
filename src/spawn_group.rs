@@ -1,4 +1,4 @@
-use crate::async_stream::stream::AsyncStream;
+use crate::async_stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
@@ -35,7 +35,6 @@ pub struct SpawnGroup<ValueType: Send + 'static> {
     wait_at_drop: bool,
     count: Arc<AtomicUsize>,
     runtime: RuntimeEngine<ValueType>,
-    polled: bool,
 }
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
@@ -93,7 +92,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish.
-    pub async fn wait_for_all(&mut self) {
+    pub async fn wait_for_all(&self) {
         self.wait().await;
     }
 }
@@ -189,7 +188,6 @@ impl<ValueType: Send> Initializible for SpawnGroup<ValueType> {
             is_cancelled: false,
             count: Arc::new(AtomicUsize::new(0)),
             wait_at_drop: true,
-            polled: false,
         }
     }
 }
@@ -201,7 +199,6 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
     where
         F: Future<Output = Self::Result> + Send + 'static,
     {
-        self.polled = false;
         self.increment_count();
         self.runtime.write_task(priority, closure);
     }
@@ -222,20 +219,10 @@ impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
-    fn poll_all(&self) {
-        self.runtime.poll();
-    }
-}
-
 impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if !self.polled {
-            self.poll_all();
-            self.polled = true;
-        }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut stream: AsyncStream<ValueType> = self.runtime.stream();
         let pinned_stream: Pin<&mut AsyncStream<ValueType>> = Pin::new(&mut stream);
         <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
@@ -244,7 +231,7 @@ impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
 
 #[async_trait]
 impl<ValueType: Send + 'static> Waitable for SpawnGroup<ValueType> {
-    async fn wait(&mut self) {
+    async fn wait(&self) {
         self.runtime.wait_for_all_tasks().await;
         self.decrement_count_to_zero();
     }

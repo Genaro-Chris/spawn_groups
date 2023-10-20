@@ -25,10 +25,12 @@ impl Future for Delay {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.now.elapsed() >= self.duration {
-            return Poll::Ready(());
+        match self.now.elapsed() >= self.duration {
+            true => Poll::Ready(()),
+            false => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
         }
-        cx.waker().wake_by_ref();
-        Poll::Pending
     }
 }

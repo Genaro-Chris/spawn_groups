@@ -73,22 +73,21 @@ impl Executor {
     }
 
     pub(crate) fn cancel(&self) {
-        self.cancel.store(true, Ordering::SeqCst);
+        self.cancel.store(true, Ordering::Release);
         *self.lock_pair.0.lock() = false;
         self.store(false);
         while self.queue.clone().pop().is_some() {}
-        self.cancel.store(false, Ordering::SeqCst);
+        self.cancel.store(false, Ordering::Release);
     }
 
     pub(crate) fn run(&mut self) {
         loop {
-            if !self.cancel.load(Ordering::SeqCst) {
+            if !self.cancel.load(Ordering::Acquire) {
                 while let Some(task) = self.queue.pop() {
                     if !task.is_completed() {
                         let queue: TaskQueue = self.queue.clone();
                         let notifier: Arc<Notifier> = Arc::new(Notifier::default());
                         self.pool.execute(move || {
-                            let mut queue: TaskQueue = queue.clone();
                             let waker: Waker = notifier.clone().into_waker();
                             let task_clone: Task = task.clone();
                             pin_future!(task);

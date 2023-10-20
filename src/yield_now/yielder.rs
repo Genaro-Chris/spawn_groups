@@ -13,12 +13,13 @@ pub struct Yielder {
 impl Future for Yielder {
     type Output = ();
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if !self.yield_now {
-            self.yield_now = true;
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
+        match self.yield_now {
+            true => Poll::Ready(()),
+            false => {
+                self.yield_now = true;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
         }
-
-        Poll::Ready(())
     }
 }

@@ -1,5 +1,5 @@
 use cooked_waker::WakeRef;
-use parking_lot::{lock_api::MutexGuard, Condvar, Mutex, RawMutex};
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 #[derive(Default)]
 pub struct Notifier {
@@ -10,7 +10,7 @@ pub struct Notifier {
 impl WakeRef for Notifier {
     fn wake_by_ref(&self) {
         let was_notified: bool = {
-            let mut lock: MutexGuard<'_, RawMutex, bool> = self.was_notified.lock();
+            let mut lock: MutexGuard<'_, bool> = self.was_notified.lock().unwrap();
             std::mem::replace(&mut *lock, true)
         };
         if !was_notified {
@@ -21,10 +21,10 @@ impl WakeRef for Notifier {
 
 impl Notifier {
     pub(crate) fn wait(&self) {
-        let mut was_notified: MutexGuard<'_, RawMutex, bool> = self.was_notified.lock();
+        let mut was_notified: MutexGuard<'_, bool> = self.was_notified.lock().unwrap();
 
-        if !*was_notified {
-            self.cv.wait(&mut was_notified);
+        while !*was_notified {
+            was_notified = self.cv.wait(was_notified).unwrap();
         }
         *was_notified = false;
     }

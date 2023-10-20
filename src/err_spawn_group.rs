@@ -1,4 +1,4 @@
-use crate::async_stream::stream::AsyncStream;
+use crate::async_stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
@@ -35,7 +35,6 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     count: Arc<AtomicUsize>,
     runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
     wait_at_drop: bool,
-    polled: bool,
 }
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
@@ -194,7 +193,6 @@ impl<ValueType: Send, ErrorType: Send> Initializible for ErrSpawnGroup<ValueType
             is_cancelled: false,
             runtime: RuntimeEngine::init(),
             wait_at_drop: true,
-            polled: false,
         }
     }
 }
@@ -208,7 +206,6 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
     where
         F: Future<Output = Self::Result> + Send + 'static,
     {
-        self.polled = false;
         self.increment_count();
         self.runtime.write_task(priority, closure);
     }
@@ -229,20 +226,10 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
-    fn poll_all(&self) {
-        self.runtime.poll();
-    }
-}
-
 impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
     type Item = Result<ValueType, ErrorType>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if !self.polled {
-            self.poll_all();
-            self.polled = true;
-        }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut stream: AsyncStream<Result<ValueType, ErrorType>> = self.runtime.stream();
         let pinned_stream: Pin<&mut AsyncStream<Result<ValueType, ErrorType>>> =
             Pin::new(&mut stream);
@@ -254,7 +241,7 @@ impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, Error
 impl<ValueType: Send + 'static, ErrorType: Send + 'static> Waitable
     for ErrSpawnGroup<ValueType, ErrorType>
 {
-    async fn wait(&mut self) {
+    async fn wait(&self) {
         self.runtime.wait_for_all_tasks().await;
         self.decrement_count_to_zero();
     }

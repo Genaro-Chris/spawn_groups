@@ -12,6 +12,10 @@ license-file = "license.txt"
 
 publish = true
 
+[profile.release]
+panic = "abort"
+
+
 [dependencies]
 async-trait = "0.1.73"
 threadpool = "1.8.1"
