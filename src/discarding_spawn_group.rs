@@ -45,7 +45,7 @@ impl DiscardingSpawnGroup {
     /// # Parameters
     ///
     /// * `priority`: priority to use
-    /// * `closure`: an async closure that doesn't return a anything
+    /// * `closure`: an async closure that doesn't return anything
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
         F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,

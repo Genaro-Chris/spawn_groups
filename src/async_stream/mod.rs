@@ -98,7 +98,6 @@ impl<ItemType> AsyncStream<ItemType> {
 impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
-    #[inline]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         block_on(async move {
             let mut inner_lock: MutexGuard<'_, VecDeque<ItemType>> = self.buffer.lock().await;

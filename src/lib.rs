@@ -8,22 +8,22 @@
 //! ```sh
 //! cargo add spawn_groups
 //! ```
-//! 
+//!
 //! # Example
-//! 
+//!
 //! ```ignore
 //! use async_std::stream::StreamExt;
 //! use spawn_groups::{with_err_spawn_group, GetType, Priority};
 //! use std::time::Instant;
 //! use surf::{Error, Client, http::Mime, StatusCode};
-//! 
+//!
 //! async fn get_mimetype<AsStr: AsRef<str>>(url: AsStr, client: Client) -> Option<Mime> {
 //!     let Ok(resp) = client.get(url).send().await else {
 //!         return None;
 //!     };
 //!     resp.content_type()
 //! }
-//! 
+//!
 //! #[async_std::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let client = surf::Client::new();
@@ -42,20 +42,20 @@
 //!         "https://www.instagram.com",
 //!         "https://tiktok.com",
 //!     ];
-//!     with_err_spawn_group(String::TYPE, Error::TYPE, move |mut eg| async move {
+//!     with_err_spawn_group(move |mut group| async move {
 //!         println!("About to start");
 //!         let now = Instant::now();
 //!         for url in urls {
 //!             let client = client.clone();
-//!             eg.spawn_task(Priority::default(), async move {
+//!             group.spawn_task(Priority::default(), async move {
 //!                 if let Some(mimetype) = get_mimetype(url, client).await {
 //!                     return Ok(format!("{url}: {}", mimetype));
 //!                 }
 //!                 Err(Error::from_str(StatusCode::ExpectationFailed, format!("No content type found for {}", url)))
 //!             })
 //!         }
-//! 
-//!         while let Some(result) = eg.next().await {
+//!
+//!         while let Some(result) = group.next().await {
 //!             if let Err(error) = result {
 //!                 eprintln!("{}", error);
 //!             } else {
@@ -68,24 +68,31 @@
 //!     Ok(())
 //! }
 //! ```
-//! 
+//!
 //! # Usage
 //!
 //! To properly use this crate
 //! * ``with_spawn_group`` for the creation of a dynamic number of asynchronous tasks that return a value. See [`with_spawn_group`](self::with_spawn_group)
 //! for more information
 //!
+//! * ``with_type_spawn_group`` for the creation of a dynamic number of asynchronous tasks that return a value by specifying the type explicitly. See [`with_type_spawn_group`](self::with_type_spawn_group)
+//! for more information
+//!
 //! * ``with_err_spawn_group`` for the creation of a dynamic number of asynchronous tasks that return a value or an error.
 //! See [`with_err_spawn_group`](self::with_err_spawn_group)
+//! for more information
+//!
+//! * ``with_err_type_spawn_group`` for the creation of a dynamic number of asynchronous tasks that return a value or an error by specifiying the return type and the error type explicitly.
+//! See [`with_err_type_spawn_group`](self::with_err_type_spawn_group)
 //! for more information
 //!
 //! * ``with_discarding_spawn_group`` for the creation of a dynamic number of asynchronous tasks that returns nothing.
 //! See [`with_discarding_spawn_group`](self::with_discarding_spawn_group)
 //! for more information
-//! 
+//!
 //! * ``sleep`` similar to ``std::thread::sleep`` but for sleeping in asynchronous environments. See [`sleep`](self::sleep)
 //! for more information
-//! 
+//!
 //! * ``block_on`` polls future to finish. See [`block_on`](self::block_on)
 //! for more information
 //!
@@ -110,7 +117,7 @@
 //! are immediately awaited for.
 //!
 //! # Stream
-//! 
+//!
 //! Both [`SpawnGroup`](self::spawn_group::SpawnGroup) and [`ErrSpawnGroup`](self::err_spawn_group::ErrSpawnGroup) structs implements the ``futures_lite::Stream``
 //! which means that you can await the result of each child task asynchronously and with the help of ``StreamExt`` trait, one can call methods such as ``next``,
 //! ``map``, ``filter_map``, ``fold`` and so much more.
@@ -122,7 +129,7 @@
 //! use spawn_groups::GetType;
 //!
 //! # spawn_groups::block_on(async move {
-//! with_spawn_group(i64::TYPE, |mut group| async move {
+//! with_spawn_group(|mut group| async move {
 //!      for i in 0..=10 {
 //!         group.spawn_task(Priority::default(), async move {
 //!           // simulate asynchronous operation
@@ -139,9 +146,9 @@
 //! # });
 //!
 //! ```
-//! 
+//!
 //! # Comparisons against existing alternatives
-//! 
+//!
 //!
 //!
 //! # Note
@@ -156,21 +163,21 @@
 
 pub mod discarding_spawn_group;
 pub mod err_spawn_group;
-pub mod meta_types;
 pub mod spawn_group;
 
 mod async_runtime;
 mod async_stream;
+mod executors;
+mod meta_types;
 mod shared;
 mod sleeper;
-mod executors;
 mod yield_now;
 
 pub use executors::block_on;
-pub use sleeper::sleep;
-pub use yield_now::yield_now;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
+pub use sleeper::sleep;
+pub use yield_now::yield_now;
 
 use std::future::Future;
 use std::marker::PhantomData;
@@ -196,12 +203,12 @@ use std::marker::PhantomData;
 ///
 /// ```rust
 /// use spawn_groups::GetType;
-/// use spawn_groups::with_spawn_group;
+/// use spawn_groups::with_type_spawn_group;
 /// use futures_lite::StreamExt;
 /// use spawn_groups::Priority;
 ///
 /// # spawn_groups::block_on(async move {
-/// let final_result = with_spawn_group(i64::TYPE, |mut group| async move {
+/// let final_result = with_type_spawn_group(i64::TYPE, |mut group| async move {
 ///      for i in 0..=10 {
 ///         group.spawn_task(Priority::default(), async move {
 ///            // simulate asynchronous operation
@@ -217,7 +224,7 @@ use std::marker::PhantomData;
 ///  assert_eq!(final_result, 55);
 /// # });
 /// ```
-pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(
+pub async fn with_type_spawn_group<Closure, Fut, ResultType, ReturnType>(
     of_type: PhantomData<ResultType>,
     body: Closure,
 ) -> ReturnType
@@ -227,6 +234,57 @@ where
     ResultType: Send + 'static,
 {
     _ = of_type;
+    let task_group = spawn_group::SpawnGroup::<ResultType>::new();
+    body(task_group).await
+}
+
+/// Starts a scoped closure that takes a mutable ``SpawnGroup`` instance as an argument which can execute any number of child tasks which its result values are of the generic ``ResultType`` type.
+///
+/// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
+/// of the ``SpawnGroup`` struct.
+///
+/// See [`SpawnGroup`](spawn_group::SpawnGroup)
+/// for more.
+///
+/// # Parameters
+///
+/// * `body`: an async closure that takes a mutable instance of ``SpawnGroup`` as an argument
+///
+/// # Returns
+///
+/// Anything the ``body`` parameter returns
+///
+/// # Example
+///
+/// ```rust
+/// use spawn_groups::GetType;
+/// use spawn_groups::with_spawn_group;
+/// use futures_lite::StreamExt;
+/// use spawn_groups::Priority;
+///
+/// # spawn_groups::block_on(async move {
+/// let final_result = with_spawn_group(|mut group| async move {
+///      for i in 0..=10 {
+///         group.spawn_task(Priority::default(), async move {
+///            // simulate asynchronous operation
+///            i
+///         });
+///      }
+///
+///      group.fold(0, |acc, x| {
+///          acc + x
+///      }).await
+///  }).await;
+///
+///  assert_eq!(final_result, 55);
+/// # });
+/// ```
+pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
+where
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + Send + 'static,
+    Fut: Future<Output = ReturnType> + Send + 'static,
+    ResultType: Send + 'static,
+{
     let task_group = spawn_group::SpawnGroup::<ResultType>::new();
     body(task_group).await
 }
@@ -244,6 +302,107 @@ where
 ///
 /// * `of_type`: The type which the child task can return
 /// * `error_type`: The error type which the child task can return
+/// * `body`: an async closure that takes a mutable instance of ``ErrSpawnGroup`` as an argument
+///
+/// # Returns
+///
+/// Anything the ``body`` parameter returns
+///
+/// # Example
+///
+/// ```rust
+/// use std::error::Error;
+/// use std::fmt::Display;
+/// use spawn_groups::GetType;
+/// use spawn_groups::with_err_type_spawn_group;
+/// use futures_lite::StreamExt;
+/// use spawn_groups::Priority;
+///
+/// #[derive(Debug)]
+/// enum DivisibleByError {
+///     THREE,
+///     FIVE
+/// }
+///
+/// impl Display for DivisibleByError {
+///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+///         match self {
+///             DivisibleByError::THREE => f.write_str("Divisible by three"),
+///             DivisibleByError::FIVE => f.write_str("Divisible by five")
+///         }
+///     }
+/// }
+///
+/// impl Error for DivisibleByError {}
+///
+/// # spawn_groups::block_on(async move {
+/// let final_results = with_err_type_spawn_group(u8::TYPE, DivisibleByError::TYPE, |mut group| async move {
+///     for i in 1..=10 {
+///         group.spawn_task(Priority::default(), async move {
+///          // simulate asynchronous processing that might fail and
+///          // return a value of ErrorType specified above
+///             if i % 3 == 0 {
+///                return Err(DivisibleByError::THREE)
+///             } else if i % 5 == 0 {
+///                return Err(DivisibleByError::FIVE)
+///             }
+///             Ok(i)
+///           });
+///        }
+///             
+///   // Explicitly wait for the all spawned child tasks to finish
+///     group.wait_for_all().await;
+///
+///     let mut sum_result = 0;
+///     let mut divisible_by_five = 0;
+///     let mut divisible_by_three = 0;
+///     while let Some(group_result) = group.next().await {
+///        if let Ok(result) = group_result {
+///          sum_result += result;
+///        } else if let Err(err_result) = group_result {
+///            match err_result {
+///              DivisibleByError::THREE => divisible_by_three += 1,
+///              DivisibleByError::FIVE => divisible_by_five += 1
+///            }
+///        }
+///     }
+///
+///     (sum_result, divisible_by_three, divisible_by_five)
+///
+/// }).await;
+///
+/// assert_eq!(final_results.0, 22);
+/// assert_eq!(final_results.1, 3);
+/// assert_eq!(final_results.2, 2);
+/// # });
+/// ```
+pub async fn with_err_type_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
+    of_type: PhantomData<ResultType>,
+    error_type: PhantomData<ErrorType>,
+    body: Closure,
+) -> ReturnType
+where
+    ErrorType: Send + 'static,
+    Fut: Future<Output = ReturnType>,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
+    ResultType: Send + 'static,
+{
+    _ = (of_type, error_type);
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new();
+    body(task_group).await
+}
+
+/// Starts a scoped closure that takes a mutable ``ErrSpawnGroup`` instance as an argument which can execute any number of child tasks which its result values are of the type ``Result<ResultType, ErrorType>``
+/// where ``ResultType`` can be of type and ``ErrorType`` which is any type that implements the standard ``Error`` type.
+///
+/// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
+/// of the ``ErrSpawnGroup`` struct
+///
+/// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
+/// for more.
+///
+/// # Parameters
+///
 /// * `body`: an async closure that takes a mutable instance of ``ErrSpawnGroup`` as an argument
 ///
 /// # Returns
@@ -278,7 +437,7 @@ where
 /// impl Error for DivisibleByError {}
 ///
 /// # spawn_groups::block_on(async move {
-/// let final_results = with_err_spawn_group(u8::TYPE, DivisibleByError::TYPE, |mut group| async move {
+/// let final_results = with_err_spawn_group(|mut group| async move {
 ///     for i in 1..=10 {
 ///         group.spawn_task(Priority::default(), async move {
 ///          // simulate asynchronous processing that might fail and
@@ -300,7 +459,7 @@ where
 ///     let mut divisible_by_three = 0;
 ///     while let Some(group_result) = group.next().await {
 ///        if let Ok(result) = group_result {
-///          sum_result += group_result.unwrap();
+///          sum_result += result;
 ///        } else if let Err(err_result) = group_result {
 ///            match err_result {
 ///              DivisibleByError::THREE => divisible_by_three += 1,
@@ -319,8 +478,6 @@ where
 /// # });
 /// ```
 pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
-    of_type: PhantomData<ResultType>,
-    error_type: PhantomData<ErrorType>,
     body: Closure,
 ) -> ReturnType
 where
@@ -329,7 +486,6 @@ where
     Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
     ResultType: Send + 'static,
 {
-    _ = (of_type, error_type);
     let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new();
     body(task_group).await
 }

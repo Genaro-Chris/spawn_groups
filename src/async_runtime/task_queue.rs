@@ -1,18 +1,33 @@
-use super::{stream::AsyncStream, task::Task};
-use crate::executors::block_on;
-use futures_lite::StreamExt;
+use super::task::Task;
+use parking_lot::{lock_api::MutexGuard, Mutex, RawMutex};
+use std::{collections::VecDeque, iter::Iterator, sync::Arc};
 
 #[derive(Clone, Default)]
 pub struct TaskQueue {
-    stream: AsyncStream<Task>,
+    buffer: Arc<Mutex<VecDeque<Task>>>,
 }
 
 impl TaskQueue {
     pub(crate) fn push(&self, task: Task) {
-        self.stream.insert_item(task);
+        let mut inner_lock: MutexGuard<'_, RawMutex, VecDeque<Task>> = self.buffer.lock();
+        inner_lock.push_back(task);
     }
+}
 
-    pub(crate) fn pop(&mut self) -> Option<Task> {
-        block_on(async move { self.stream.next().await })
+impl Iterator for TaskQueue {
+    type Item = Task;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut inner_lock: MutexGuard<'_, RawMutex, VecDeque<Task>> = self.buffer.lock();
+        if inner_lock.is_empty() {
+            return None;
+        }
+        if let Some(task) = inner_lock.pop_front() {
+            if !task.is_completed() {
+                return Some(task);
+            }
+        }
+
+        None
     }
 }

@@ -16,7 +16,7 @@ This was heavily influenced by the Swift language's [`TaskGroup`](https://develo
 Add to your code
 
 ```sh
-cargo add spawn_groups
+cargo add spawn_groups@2.0.0
 ```
 
 ## Example
@@ -52,12 +52,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "https://www.instagram.com",
         "https://tiktok.com",
     ];
-    with_err_spawn_group(String::TYPE, Error::TYPE, move |mut eg| async move {
+    with_err_spawn_group(String::TYPE, Error::TYPE, move |mut group| async move {
         println!("About to start");
         let now = Instant::now();
         for url in urls {
             let client = client.clone();
-            eg.spawn_task(Priority::default(), async move {
+            group.spawn_task(Priority::default(), async move {
                 if let Some(mimetype) = get_mimetype(url, client).await {
                     return Ok(format!("{url}: {}", mimetype));
                 }
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
         }
 
-        while let Some(result) = eg.next().await {
+        while let Some(result) = group.next().await {
             if let Err(error) = result {
                 eprintln!("{}", error);
             } else {
@@ -88,4 +88,4 @@ For a better documentation of this rust crate. Visit [here](https://docs.rs/spaw
 
 * [`JoinSet`](): Like this alternative, both await the completion of some or all of the child tasks, spawn child tasks in an unordered manner and the result of their child tasks will be returned in the order they complete and also cancel or abort all child tasks. Unlike the `Joinset`, you can explicitly await for all the child task to finish their execution. The Spawn group option provides a scope for the child tasks to execute.
 
-* [`FuturesUnordered`]() Like this alternative, both spawn child tasks in an unordered manner, but it doesn't immediately start running the spawned child tasks until it is being polled. It also doesn't provide a way to cancel all child tasks. 
+* [`FuturesUnordered`]() Like this alternative, both spawn child tasks in an unordered manner, but FuturesUnordered doesn't immediately start running the spawned child tasks until it is being polled. It also doesn't provide a way to cancel all child tasks. 

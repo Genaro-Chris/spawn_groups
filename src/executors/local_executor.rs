@@ -16,7 +16,6 @@ thread_local! {
     };
 }
 
-#[inline]
 pub(crate) fn block_future<Fut: Future>(
     future: Fut,
     notifier: Arc<Notifier>,
@@ -27,7 +26,9 @@ pub(crate) fn block_future<Fut: Future>(
     loop {
         match future.as_mut().poll(&mut context) {
             std::task::Poll::Ready(output) => return output,
-            std::task::Poll::Pending => notifier.wait(),
+            std::task::Poll::Pending => {
+                notifier.wait()
+            }
         }
     }
 }

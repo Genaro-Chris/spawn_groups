@@ -76,34 +76,32 @@ impl Executor {
         self.cancel.store(true, Ordering::Release);
         *self.lock_pair.0.lock() = false;
         self.store(false);
-        while self.queue.clone().pop().is_some() {}
+        while self.queue.clone().next().is_some() {}
         self.cancel.store(false, Ordering::Release);
     }
 
     pub(crate) fn run(&mut self) {
         loop {
             if !self.cancel.load(Ordering::Acquire) {
-                while let Some(task) = self.queue.pop() {
-                    if !task.is_completed() {
-                        let queue: TaskQueue = self.queue.clone();
-                        let notifier: Arc<Notifier> = Arc::new(Notifier::default());
-                        self.pool.execute(move || {
-                            let waker: Waker = notifier.clone().into_waker();
-                            let task_clone: Task = task.clone();
-                            pin_future!(task);
-                            let mut cx: Context<'_> = Context::from_waker(&waker);
-                            match task.as_mut().poll(&mut cx) {
-                                Poll::Ready(()) => {}
-                                Poll::Pending => {
-                                    queue.push(task_clone);
-                                }
+                for task in self.queue.clone() {
+                    let queue: TaskQueue = self.queue.clone();
+                    let notifier: Arc<Notifier> = Arc::new(Notifier::default());
+                    self.pool.execute(move || {
+                        let waker: Waker = notifier.clone().into_waker();
+                        let task_clone: Task = task.clone();
+                        pin_future!(task);
+                        let mut cx: Context<'_> = Context::from_waker(&waker);
+                        match task.as_mut().poll(&mut cx) {
+                            Poll::Ready(()) => {}
+                            Poll::Pending => {
+                                queue.push(task_clone);
                             }
-                        });
-                    }
+                        }
+                    });
                 }
             } else {
                 self.poll_all();
-                while self.queue.pop().is_some() {}
+                while self.queue.next().is_some() {}
                 return;
             }
         }
