@@ -1,10 +1,9 @@
-use crate::pin_future;
+use crate::{pin_future, ThreadPool};
 
 use super::{notifier::Notifier, task::Task, task_queue::TaskQueue};
 
 use cooked_waker::IntoWaker;
 use parking_lot::{lock_api::MutexGuard, Condvar, Mutex, RawMutex};
-use threadpool::{Builder, ThreadPool};
 
 use std::{
     future::Future,
@@ -19,7 +18,7 @@ use std::{
 pub struct Executor {
     cancel: Arc<AtomicBool>,
     lock_pair: Arc<(Mutex<bool>, Condvar)>,
-    pool: ThreadPool,
+    pool: Arc<ThreadPool>,
     queue: TaskQueue,
     started: Arc<AtomicBool>,
 }
@@ -29,7 +28,7 @@ impl Executor {
         let result: Executor = Self {
             cancel: Arc::new(AtomicBool::new(false)),
             lock_pair: Arc::new((Mutex::new(false), Condvar::new())),
-            pool: Builder::new().thread_name("Executor".to_owned()).build(),
+            pool: Arc::new(ThreadPool::default()),
             queue: TaskQueue::default(),
             started: Arc::new(AtomicBool::new(false)),
         };
@@ -64,7 +63,7 @@ impl Executor {
     fn notify(&self) {
         self.store(true);
         let pair2: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
-        ThreadPool::new(1).execute(move || {
+        std::thread::spawn(move || {
             let (lock, cvar) = &*pair2;
             let mut started: MutexGuard<'_, RawMutex, bool> = lock.lock();
             *started = true;
@@ -86,7 +85,7 @@ impl Executor {
                 for task in self.queue.clone() {
                     let queue: TaskQueue = self.queue.clone();
                     let notifier: Arc<Notifier> = Arc::new(Notifier::default());
-                    self.pool.execute(move || {
+                    self.pool.submit(move || {
                         let waker: Waker = notifier.clone().into_waker();
                         let task_clone: Task = task.clone();
                         pin_future!(task);
@@ -108,13 +107,13 @@ impl Executor {
     }
 
     fn poll_all(&self) {
-        self.pool.join();
+        self.pool.wait_for_all();
     }
 
     pub(crate) fn start(&self) {
         let lock_pair: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
         let mut executor: Executor = self.clone();
-        ThreadPool::new(1).execute(move || {
+        std::thread::spawn(move || {
             let (lock, cvar) = &*lock_pair;
             let mut started: MutexGuard<'_, RawMutex, bool> = lock.lock();
             while !*started {

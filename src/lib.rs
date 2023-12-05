@@ -171,12 +171,14 @@ mod executors;
 mod meta_types;
 mod shared;
 mod sleeper;
+mod threadpool;
 mod yield_now;
 
 pub use executors::block_on;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
 pub use sleeper::sleep;
+pub use threadpool::{ThreadPool, ThreadSafeQueue, QueueOrder};
 pub use yield_now::yield_now;
 
 use std::future::Future;
