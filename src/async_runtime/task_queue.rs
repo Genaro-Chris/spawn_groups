@@ -8,9 +8,17 @@ pub struct TaskQueue {
 }
 
 impl TaskQueue {
-    pub(crate) fn push(&self, task: Task) {
+    pub(crate) fn push(&self, task: &Task) {
+        let task = task.clone();
         let mut inner_lock: MutexGuard<'_, RawMutex, VecDeque<Task>> = self.buffer.lock();
         inner_lock.push_back(task);
+    }
+}
+
+impl TaskQueue {
+    pub(crate) fn drain_all(&self) {
+        let mut inner_lock: MutexGuard<'_, RawMutex, VecDeque<Task>> = self.buffer.lock();
+        inner_lock.clear();
     }
 }
 
@@ -19,15 +27,10 @@ impl Iterator for TaskQueue {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut inner_lock: MutexGuard<'_, RawMutex, VecDeque<Task>> = self.buffer.lock();
-        if inner_lock.is_empty() {
-            return None;
+        let task = inner_lock.pop_front();
+        if !task.clone()?.is_completed() {
+            return task;
         }
-        if let Some(task) = inner_lock.pop_front() {
-            if !task.is_completed() {
-                return Some(task);
-            }
-        }
-
         None
     }
 }

@@ -1,4 +1,3 @@
-use crate::async_stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
@@ -181,7 +180,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
 impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueType, ErrorType> {
     fn drop(&mut self) {
         if self.wait_at_drop {
-            self.runtime.wait_for_all_tasks_non_async();
+            self.runtime.wait_for_all_tasks();
         }
     }
 }
@@ -230,10 +229,7 @@ impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, Error
     type Item = Result<ValueType, ErrorType>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut stream: AsyncStream<Result<ValueType, ErrorType>> = self.runtime.stream();
-        let pinned_stream: Pin<&mut AsyncStream<Result<ValueType, ErrorType>>> =
-            Pin::new(&mut stream);
-        <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
+        self.runtime.stream().poll_next(cx)
     }
 }
 
@@ -242,7 +238,7 @@ impl<ValueType: Send + 'static, ErrorType: Send + 'static> Waitable
     for ErrSpawnGroup<ValueType, ErrorType>
 {
     async fn wait(&self) {
-        self.runtime.wait_for_all_tasks().await;
+        self.runtime.wait_for_all_tasks();
         self.decrement_count_to_zero();
     }
 }

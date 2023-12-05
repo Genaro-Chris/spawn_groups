@@ -47,12 +47,12 @@ impl Executor {
 }
 
 impl Executor {
-    pub(crate) fn spawn<Fut>(&mut self, task: Fut) -> Task
+    pub(crate) fn spawn<Fut>(&self, task: Fut) -> Task
     where
         Fut: Future<Output = ()> + 'static + Send,
     {
         let task: Task = Task::new(task);
-        self.queue.push(task.clone());
+        self.queue.push(&task);
 
         if !self.load() {
             self.notify();
@@ -75,35 +75,30 @@ impl Executor {
         self.cancel.store(true, Ordering::Release);
         *self.lock_pair.0.lock() = false;
         self.store(false);
-        while self.queue.clone().next().is_some() {}
+        self.queue.drain_all();
         self.cancel.store(false, Ordering::Release);
     }
 
-    pub(crate) fn run(&mut self) {
-        loop {
-            if !self.cancel.load(Ordering::Acquire) {
-                for task in self.queue.clone() {
-                    let queue: TaskQueue = self.queue.clone();
-                    let notifier: Arc<Notifier> = Arc::new(Notifier::default());
-                    self.pool.submit(move || {
-                        let waker: Waker = notifier.clone().into_waker();
-                        let task_clone: Task = task.clone();
-                        pin_future!(task);
-                        let mut cx: Context<'_> = Context::from_waker(&waker);
-                        match task.as_mut().poll(&mut cx) {
-                            Poll::Ready(()) => {}
-                            Poll::Pending => {
-                                queue.push(task_clone);
-                            }
+    pub(crate) fn run(&self) {
+        while !self.cancel.load(Ordering::Acquire) {
+            let queue = self.queue.clone();
+            queue.for_each(|task| {
+                let queue: TaskQueue = self.queue.clone();
+                self.pool.submit(move || {
+                    let waker: Waker = Arc::new(Notifier::default()).into_waker();
+                    pin_future!(task);
+                    let mut cx: Context<'_> = Context::from_waker(&waker);
+                    match task.as_mut().poll(&mut cx) {
+                        Poll::Ready(()) => return,
+                        Poll::Pending => {
+                            queue.push(&task);
                         }
-                    });
-                }
-            } else {
-                self.poll_all();
-                while self.queue.next().is_some() {}
-                return;
-            }
+                    }
+                });
+            });
         }
+        self.poll_all();
+        self.queue.drain_all();
     }
 
     fn poll_all(&self) {
@@ -112,7 +107,7 @@ impl Executor {
 
     pub(crate) fn start(&self) {
         let lock_pair: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
-        let mut executor: Executor = self.clone();
+        let executor: Executor = self.clone();
         std::thread::spawn(move || {
             let (lock, cvar) = &*lock_pair;
             let mut started: MutexGuard<'_, RawMutex, bool> = lock.lock();

@@ -134,11 +134,7 @@ impl Drop for ThreadPool {
             }
         }
         while let Some(handle) = self.handles.pop() {
-            if !handle.is_finished() {
-                let Ok(_) = handle.join() else {
-                    continue;
-                };
-            }
+            _ = handle.join();
         }
     }
 }
@@ -169,7 +165,6 @@ fn start(
                 );
                 eprintln!("{}", msg);
                 _ = panic::take_hook();
-                _ = panic::resume_unwind(Box::new(msg));
             }));
             for op in queue {
                 match (op, arc_flag.load(std::sync::atomic::Ordering::Acquire)) {

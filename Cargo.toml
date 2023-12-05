@@ -12,9 +12,6 @@ license-file = "license.txt"
 
 publish = true
 
-[profile.release]
-panic = "abort"
-
 
 [dependencies]
 async-trait = "0.1.73"

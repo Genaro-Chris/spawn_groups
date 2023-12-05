@@ -1,4 +1,3 @@
-use crate::async_stream::AsyncStream;
 use crate::shared::{
     initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
@@ -176,7 +175,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
 impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
     fn drop(&mut self) {
         if self.wait_at_drop {
-            self.runtime.wait_for_all_tasks_non_async();
+            self.runtime.wait_for_all_tasks();
         }
     }
 }
@@ -223,16 +222,14 @@ impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut stream: AsyncStream<ValueType> = self.runtime.stream();
-        let pinned_stream: Pin<&mut AsyncStream<ValueType>> = Pin::new(&mut stream);
-        <AsyncStream<Self::Item> as Stream>::poll_next(pinned_stream, cx)
+        self.runtime.stream().poll_next(cx)
     }
 }
 
 #[async_trait]
 impl<ValueType: Send + 'static> Waitable for SpawnGroup<ValueType> {
     async fn wait(&self) {
-        self.runtime.wait_for_all_tasks().await;
+        self.runtime.wait_for_all_tasks();
         self.decrement_count_to_zero();
     }
 }

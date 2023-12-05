@@ -1,8 +1,10 @@
-use crate::async_runtime::{executor::Executor, task::Task};
-use crate::async_stream::AsyncStream;
-use crate::executors::block_task;
-use crate::shared::{initializible::Initializible, priority::Priority};
-use crate::threadpool::ThreadPool;
+use crate::{
+    async_runtime::{executor::Executor, task::Task},
+    async_stream::AsyncStream,
+    executors::block_task,
+    shared::{initializible::Initializible, priority::Priority},
+    threadpool::ThreadPool,
+};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     future::Future,
@@ -36,13 +38,9 @@ impl<ItemType> Initializible for RuntimeEngine<ItemType> {
 
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn cancel(&mut self) {
-        let lock: Arc<Mutex<Vec<(Priority, Task)>>> = self.iter.clone();
         self.store(true);
         self.runtime.cancel();
-        self.engine.submit(move || {
-            let mut iter: MutexGuard<'_, Vec<(Priority, Task)>> = lock.lock();
-            while iter.pop().is_some() {}
-        });
+        self.iter.lock().clear();
         self.stream.cancel_tasks();
         self.poll();
     }
@@ -55,22 +53,17 @@ impl<ItemType> RuntimeEngine<ItemType> {
 }
 
 impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
-    pub(crate) fn wait_for_all_tasks_non_async(&self) {
-        let lock: Arc<Mutex<Vec<(Priority, Task)>>> = self.iter.clone();
+    pub(crate) fn wait_for_all_tasks(&self) {
         self.poll();
         self.runtime.cancel();
-        let engine = self.engine.clone();
-        let cloned: RuntimeEngine<ValueType> = self.clone();
-        self.engine.submit(move || {
-            let mut iter: MutexGuard<'_, Vec<(Priority, Task)>> = lock.lock();
-            iter.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-            cloned.store(true);
-            while let Some((_, handle)) = iter.pop() {
-                engine.submit(move || {
-                    block_task(handle);
-                });
-            }
-        });
+        let mut iter: MutexGuard<'_, Vec<(Priority, Task)>> = self.iter.lock();
+        iter.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+        self.store(true);
+        while let Some((_, handle)) = iter.pop() {
+            self.engine.submit(move || {
+                block_task(handle);
+            });
+        }
         self.poll();
     }
 }
@@ -86,7 +79,7 @@ impl<ItemType> RuntimeEngine<ItemType> {
 }
 
 impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
-    pub(crate) fn write_task<F>(&mut self, priority: Priority, task: F)
+    pub(crate) fn write_task<F>(&self, priority: Priority, task: F)
     where
         F: Future<Output = ItemType> + Send + 'static,
     {
@@ -95,7 +88,7 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
             self.store(false);
         }
         self.stream.increment();
-        let mut stream: AsyncStream<ItemType> = self.stream.clone();
+        let mut stream: AsyncStream<ItemType> = self.stream();
         let task = self.runtime.spawn(async move {
             stream.insert_item(task.await).await;
             stream.decrement_task_count();
@@ -105,23 +98,6 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
             let mut iter: MutexGuard<'_, Vec<(Priority, Task)>> = lock.lock();
             iter.push((priority, task));
         });
-    }
-}
-
-impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
-    pub(crate) async fn wait_for_all_tasks(&self) {
-        let lock: Arc<Mutex<Vec<(Priority, Task)>>> = self.iter.clone();
-        self.poll();
-        self.runtime.cancel();
-        let mut iter: MutexGuard<'_, Vec<(Priority, Task)>> = lock.lock();
-        iter.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-        self.store(true);
-        while let Some((_, handle)) = iter.pop() {
-            self.engine.submit(move || {
-                block_task(handle);
-            });
-        }
-        self.poll();
     }
 }
 
@@ -136,7 +112,7 @@ impl<ItemType> Clone for RuntimeEngine<ItemType> {
         Self {
             iter: self.iter.clone(),
             engine: self.engine.clone(),
-            stream: self.stream.clone(),
+            stream: self.stream(),
             runtime: self.runtime.clone(),
             wait_flag: self.wait_flag.clone(),
         }

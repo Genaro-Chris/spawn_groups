@@ -93,7 +93,7 @@ impl DiscardingSpawnGroup {
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
-            self.runtime.wait_for_all_tasks_non_async();
+            self.runtime.wait_for_all_tasks();
         }
     }
 }
