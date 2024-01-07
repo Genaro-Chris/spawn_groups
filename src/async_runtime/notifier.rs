@@ -9,10 +9,8 @@ pub struct Notifier {
 
 impl WakeRef for Notifier {
     fn wake_by_ref(&self) {
-        let was_notified: bool = {
-            let mut lock: MutexGuard<'_, bool> = self.was_notified.lock().unwrap();
-            std::mem::replace(&mut *lock, true)
-        };
+        let was_notified: bool =
+            { std::mem::replace(&mut self.was_notified.lock().unwrap(), true) };
         if !was_notified {
             self.cv.notify_one();
         }

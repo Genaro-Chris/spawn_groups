@@ -18,7 +18,6 @@ use std::future::Future;
 /// Child tasks spawned to a spawn group execute concurrently, and may be scheduled in
 /// any order.
 ///
-#[derive(Clone)]
 pub struct DiscardingSpawnGroup {
     /// A field that indicates if the spawn group has been cancelled
     pub is_cancelled: bool,
@@ -94,6 +93,8 @@ impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
+        } else {
+            self.runtime.end()
         }
     }
 }

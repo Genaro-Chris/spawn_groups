@@ -138,9 +138,12 @@
 //!      }
 //!
 //!      // Loop over all the results of the child tasks spawned already
+//!      let mut counter = 0;
 //!      while let Some(x) = group.next().await {
-//!         println!("{}", x);
+//!         counter += x;
 //!      }
+//! 
+//!     assert_eq!(counter, 55);
 //!
 //! }).await;
 //! # });
@@ -171,14 +174,13 @@ mod executors;
 mod meta_types;
 mod shared;
 mod sleeper;
-mod threadpool;
+mod threadpool_impl;
 mod yield_now;
 
 pub use executors::block_on;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
 pub use sleeper::sleep;
-pub use threadpool::{ThreadPool, ThreadSafeQueue, QueueOrder};
 pub use yield_now::yield_now;
 
 use std::future::Future;

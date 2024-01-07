@@ -21,7 +21,9 @@ mod task_executor;
 /// ```
 ///
 pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
-    let waker_pair: Result<(Arc<Notifier>, Waker), std::thread::AccessError> = local_executor::WAKER_PAIR.try_with(|waker_pair: &(Arc<Notifier>, Waker)| waker_pair.clone());
+    let waker_pair: Result<(Arc<Notifier>, Waker), std::thread::AccessError> =
+        local_executor::WAKER_PAIR
+            .try_with(|waker_pair: &(Arc<Notifier>, Waker)| waker_pair.clone());
     match waker_pair {
         Ok((notifier, waker)) => block_future(future, notifier, &waker),
         Err(_) => {
@@ -33,7 +35,9 @@ pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
 }
 
 pub(crate) fn block_task(task: Task) {
-    let waker_pair: Result<(Arc<Notifier>, Waker), std::thread::AccessError> = local_executor::WAKER_PAIR.try_with(|waker_pair: &(Arc<Notifier>, Waker)| waker_pair.clone());
+    let waker_pair: Result<(Arc<Notifier>, Waker), std::thread::AccessError> =
+        local_executor::WAKER_PAIR
+            .try_with(|waker_pair: &(Arc<Notifier>, Waker)| waker_pair.clone());
     match waker_pair {
         Ok((notifier, waker)) => block_on_task(task, notifier, &waker),
         Err(_) => {

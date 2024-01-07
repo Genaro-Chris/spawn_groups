@@ -1,4 +1,4 @@
-use crate::{pin_future, ThreadPool};
+use crate::{pin_future, threadpool_impl::ThreadPool};
 
 use super::{notifier::Notifier, task::Task, task_queue::TaskQueue};
 
@@ -23,8 +23,8 @@ pub struct Executor {
     started: Arc<AtomicBool>,
 }
 
-impl Executor {
-    pub(crate) fn new() -> Self {
+impl Default for Executor {
+    fn default() -> Self {
         let result: Executor = Self {
             cancel: Arc::new(AtomicBool::new(false)),
             lock_pair: Arc::new((Mutex::new(false), Condvar::new())),
@@ -37,16 +37,23 @@ impl Executor {
     }
 }
 impl Executor {
-    fn load(&self) -> bool {
+    fn started(&self) -> bool {
         self.started.load(Ordering::Acquire)
     }
 
-    fn store(&self, val: bool) {
+    fn update(&self, val: bool) {
         self.started.store(val, Ordering::Release);
     }
 }
 
 impl Executor {
+    pub(crate) fn submit<Task>(&self, task: Task)
+    where
+        Task: FnOnce() + Send + 'static,
+    {
+        self.pool.submit(task);
+    }
+
     pub(crate) fn spawn<Fut>(&self, task: Fut) -> Task
     where
         Fut: Future<Output = ()> + 'static + Send,
@@ -54,14 +61,14 @@ impl Executor {
         let task: Task = Task::new(task);
         self.queue.push(&task);
 
-        if !self.load() {
+        if !self.started() {
             self.notify();
         }
         task
     }
 
     fn notify(&self) {
-        self.store(true);
+        self.update(true);
         let pair2: Arc<(Mutex<bool>, Condvar)> = self.lock_pair.clone();
         std::thread::spawn(move || {
             let (lock, cvar) = &*pair2;
@@ -74,22 +81,21 @@ impl Executor {
     pub(crate) fn cancel(&self) {
         self.cancel.store(true, Ordering::Release);
         *self.lock_pair.0.lock() = false;
-        self.store(false);
+        self.update(false);
         self.queue.drain_all();
         self.cancel.store(false, Ordering::Release);
     }
 
     pub(crate) fn run(&self) {
         while !self.cancel.load(Ordering::Acquire) {
-            let queue = self.queue.clone();
-            queue.for_each(|task| {
+            self.queue.clone().for_each(|task| {
                 let queue: TaskQueue = self.queue.clone();
-                self.pool.submit(move || {
+                self.submit(move || {
                     let waker: Waker = Arc::new(Notifier::default()).into_waker();
                     pin_future!(task);
                     let mut cx: Context<'_> = Context::from_waker(&waker);
                     match task.as_mut().poll(&mut cx) {
-                        Poll::Ready(()) => return,
+                        Poll::Ready(()) => (),
                         Poll::Pending => {
                             queue.push(&task);
                         }
@@ -101,7 +107,7 @@ impl Executor {
         self.queue.drain_all();
     }
 
-    fn poll_all(&self) {
+    pub(crate) fn poll_all(&self) {
         self.pool.wait_for_all();
     }
 

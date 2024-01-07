@@ -22,7 +22,9 @@ pub struct AsyncStream<ItemType> {
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) async fn insert_item(&mut self, value: ItemType) {
-        self.started = true;
+        if !self.started {
+            self.started = true;
+        }
         self.buffer.lock().await.push_back(value);
     }
 }
@@ -101,18 +103,15 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         block_on(async move {
             let mut inner_lock: MutexGuard<'_, VecDeque<ItemType>> = self.buffer.lock().await;
-            if self.cancelled && inner_lock.is_empty() {
+            if self.cancelled && inner_lock.is_empty() || self.item_count() == 0 {
                 return Poll::Ready(None);
             }
-            if self.item_count() != 0 {
-                let Some(value) = inner_lock.pop_front() else {
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                };
-                self.decrement_count();
-                return Poll::Ready(Some(value));
-            }
-            Poll::Ready(None)
+            let Some(value) = inner_lock.pop_front() else {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            };
+            self.decrement_count();
+            Poll::Ready(Some(value))
         })
     }
 }

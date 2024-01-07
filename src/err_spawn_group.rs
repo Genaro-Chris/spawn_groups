@@ -26,8 +26,6 @@ use std::{future::Future, pin::Pin};
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-
-#[derive(Clone)]
 pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
@@ -93,6 +91,14 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
         self.runtime.stream().first().await
     }
 }
+
+impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+    /// Returns an instance of the `Stream` trait.
+    pub fn stream(&self) -> impl Stream<Item = Result<ValueType, ErrorType>> {
+        self.runtime.stream()
+    }
+}
+
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
@@ -181,6 +187,8 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueTyp
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
+        } else {
+            self.runtime.end()
         }
     }
 }
