@@ -19,6 +19,7 @@ pub struct ThreadPool {
 
 impl Default for ThreadPool {
     fn default() -> Self {
+        panic_hook();
         let queue = ThreadSafeQueue::new();
         let count: usize;
         if let Ok(thread_count) = thread::available_parallelism() {
@@ -68,6 +69,7 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        _ = panic::take_hook();
         self.cancel_all();
         while let Some(handle) = self.handles.pop() {
             handle.join();
@@ -82,7 +84,6 @@ fn start(
     stop_flag: Arc<AtomicBool>,
 ) -> UniqueThread {
     UniqueThread::new(format!("ThreadPool #{}", index), move || {
-        panic_hook();
         for op in queue {
             match (op, stop_flag.load(Ordering::Acquire)) {
                 (QueueOperation::NotYet, false) => continue,
