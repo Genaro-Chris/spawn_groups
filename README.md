@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Documentation
 
-For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/1.0.0)
+For a better documentation of this rust crate. Visit [here](https://docs.rs/spawn_groups/latest)
 
 
 # Comparison against existing alternatives
