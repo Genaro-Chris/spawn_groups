@@ -1,25 +1,23 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::collections::VecDeque;
+
+use crate::arcimpl::arclock::ARCLock;
 
 #[derive(Default)]
 pub(crate) struct ThreadSafeQueue<ItemType> {
-    buffer: Arc<Mutex<VecDeque<ItemType>>>,
+    buffer: ARCLock<VecDeque<ItemType>>,
 }
 
 impl<ItemType> ThreadSafeQueue<ItemType> {
     pub fn enqueue(&self, value: ItemType) {
-        if let Ok(mut lock) = self.buffer.lock() {
-            lock.push_back(value);
-        }
+        self.buffer
+            .update_while_locked(|buffer| buffer.push_back(value));
     }
 }
 
 impl<ItemType> ThreadSafeQueue<ItemType> {
     pub fn new() -> Self {
         Self {
-            buffer: Arc::new(Mutex::new(VecDeque::new())),
+            buffer: ARCLock::new(VecDeque::new()),
         }
     }
 }
@@ -34,9 +32,6 @@ impl<ItemType> Clone for ThreadSafeQueue<ItemType> {
 
 impl<ItemType> ThreadSafeQueue<ItemType> {
     pub fn dequeue(&self) -> Option<ItemType> {
-        let Ok(mut buffer_lock) = self.buffer.lock() else {
-            return None;
-        };
-        buffer_lock.pop_front()
+        self.buffer.update_while_locked(|buffer| buffer.pop_front())
     }
 }

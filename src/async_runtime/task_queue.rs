@@ -1,21 +1,22 @@
 use super::task::Task;
-use parking_lot::Mutex;
-use std::{collections::VecDeque, iter::Iterator, sync::Arc};
+use crate::arcimpl::arclock::ARCLock;
+use std::{collections::VecDeque, iter::Iterator};
 
 #[derive(Clone, Default)]
 pub struct TaskQueue {
-    buffer: Arc<Mutex<VecDeque<Task>>>,
+    buffer: ARCLock<VecDeque<Task>>,
 }
 
 impl TaskQueue {
     pub(crate) fn push(&self, task: &Task) {
-        self.buffer.lock().push_back(task.clone());
+        self.buffer
+            .update_while_locked(|buffer| buffer.push_back(task.clone()));
     }
 }
 
 impl TaskQueue {
     pub(crate) fn drain_all(&self) {
-        self.buffer.lock().clear();
+        self.buffer.update_while_locked(|buffer| buffer.clear());
     }
 }
 
@@ -23,12 +24,14 @@ impl Iterator for TaskQueue {
     type Item = Task;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Some(task) = self.buffer.lock().pop_front() else {
-            return None;
-        };
-        if !task.is_completed() {
-            return Some(task);
-        }
-        None
+        self.buffer.update_while_locked(|buffer| {
+            let Some(task) = buffer.pop_front() else {
+                return None;
+            };
+            if !task.is_completed() {
+                return Some(task);
+            }
+            None
+        })
     }
 }

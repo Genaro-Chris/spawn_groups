@@ -142,7 +142,7 @@
 //!      while let Some(x) = group.next().await {
 //!         counter += x;
 //!      }
-//! 
+//!
 //!     assert_eq!(counter, 55);
 //!
 //! }).await;
@@ -168,6 +168,7 @@ pub mod discarding_spawn_group;
 pub mod err_spawn_group;
 pub mod spawn_group;
 
+mod arcimpl;
 mod async_runtime;
 mod async_stream;
 mod executors;
