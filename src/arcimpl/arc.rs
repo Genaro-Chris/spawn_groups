@@ -2,6 +2,7 @@ use std::{
     alloc::{alloc, alloc_zeroed, dealloc, handle_alloc_error, Layout},
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    ptr::NonNull,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -9,7 +10,6 @@ use std::{
 };
 
 /// Automatic reference counted container with inner mutability unlike the `std::sync::Arc`
-#[repr(Rust)]
 pub struct CustomArc<T> {
     count: Arc<AtomicUsize>,
     unsafe_ptr: *mut T,
@@ -26,18 +26,17 @@ impl<T> CustomArc<T> {
     }
 
     pub fn new(value: T) -> CustomArc<T> {
-        let unsafe_ptr = unsafe {
-            let layout = Layout::new::<T>();
-            let unsafe_ptr = alloc(layout);
-            if unsafe_ptr.is_null() {
-                handle_alloc_error(layout);
-            }
-            *(unsafe_ptr as *mut T) = value;
-            unsafe_ptr as *mut T
-        };
         Self {
             count: Arc::new(AtomicUsize::new(1)),
-            unsafe_ptr,
+            unsafe_ptr: unsafe {
+                let layout = Layout::new::<T>();
+                let unsafe_ptr = alloc(layout) as *mut T;
+                if unsafe_ptr.is_null() {
+                    handle_alloc_error(layout);
+                }
+                unsafe_ptr.write(value);
+                unsafe_ptr
+            },
             phantom: PhantomData,
         }
     }
@@ -46,7 +45,10 @@ impl<T> CustomArc<T> {
 impl<T> Drop for CustomArc<T> {
     fn drop(&mut self) {
         if self.count.fetch_sub(1, Ordering::SeqCst) == 1 {
-            unsafe { dealloc(self.unsafe_ptr as *mut u8, Layout::new::<T>()) }
+            unsafe {
+                let ptr = NonNull::new_unchecked(self.unsafe_ptr);
+                dealloc(ptr.as_ptr() as *mut u8, Layout::new::<T>());
+            }
         }
     }
 }
@@ -71,17 +73,17 @@ unsafe impl<T> Sync for CustomArc<T> {}
 
 impl<T: Default> Default for CustomArc<T> {
     fn default() -> Self {
-        let layout = Layout::new::<T>();
-        let unsafe_ptr = unsafe {
-            let unsafe_ptr = alloc_zeroed(layout);
-            if unsafe_ptr.is_null() {
-                handle_alloc_error(layout);
-            }
-            unsafe_ptr as *mut T
-        };
         Self {
             count: Arc::new(AtomicUsize::new(1)),
-            unsafe_ptr,
+            unsafe_ptr: unsafe {
+                let layout = Layout::new::<T>();
+                let unsafe_ptr = alloc_zeroed(layout) as *mut T;
+                if unsafe_ptr.is_null() {
+                    handle_alloc_error(layout);
+                }
+                unsafe_ptr.write(T::default());
+                unsafe_ptr
+            },
             phantom: PhantomData,
         }
     }
