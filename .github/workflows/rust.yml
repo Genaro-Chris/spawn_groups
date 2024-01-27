@@ -35,3 +35,10 @@ jobs:
        run: cargo build
      - name: Test 
        run: cargo test
+     - name: Install miri
+       run: |
+        rustup toolchain install nightly --component miri
+        cargo miri setup
+     - name: Miri test
+       run: cargo miri test
+
