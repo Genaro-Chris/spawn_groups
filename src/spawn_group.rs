@@ -4,12 +4,15 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
 };
-use std::task::{Context, Poll};
-use std::{future::Future, pin::Pin};
 
 /// Spawn Group
 ///
@@ -36,8 +39,18 @@ pub struct SpawnGroup<ValueType: Send + 'static> {
 }
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
-    pub(crate) fn new() -> Self {
-        Self::init()
+    /// Instantiates `SpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
+    /// 
+    /// # Parameters
+    ///
+    /// * `num_of_threads`: number of threads to use
+    pub fn new(num_of_threads: usize) -> Self {
+        Self {
+            is_cancelled: false,
+            count: Arc::new(AtomicUsize::new(0)),
+            runtime: RuntimeEngine::new(num_of_threads),
+            wait_at_drop: false,
+        }
     }
 }
 

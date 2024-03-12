@@ -36,6 +36,21 @@ impl Default for Executor {
         result
     }
 }
+
+impl Executor {
+    pub(crate) fn new(count: usize) -> Self {
+        let result: Executor = Self {
+            cancel: Arc::new(AtomicBool::new(false)),
+            lock_pair: Arc::new((Mutex::new(false), Condvar::new())),
+            pool: Arc::new(ThreadPool::new(count)),
+            queue: TaskQueue::default(),
+            started: Arc::new(AtomicBool::new(false)),
+        };
+        result.start();
+        result
+    }
+}
+
 impl Executor {
     fn started(&self) -> bool {
         self.started.load(Ordering::Acquire)

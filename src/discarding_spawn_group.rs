@@ -33,8 +33,17 @@ impl DiscardingSpawnGroup {
 }
 
 impl DiscardingSpawnGroup {
-    pub(crate) fn new() -> Self {
-        Self::init()
+    /// Instantiates `DiscardingSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
+    /// 
+    /// # Parameters
+    ///
+    /// * `num_of_threads`: number of threads to use
+    pub fn new(num_of_threads: usize) -> Self {
+        Self {
+            is_cancelled: false,
+            runtime: RuntimeEngine::new(num_of_threads),
+            wait_at_drop: false,
+        }
     }
 }
 

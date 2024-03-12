@@ -48,10 +48,10 @@
 //!         for url in urls {
 //!             let client = client.clone();
 //!             group.spawn_task(Priority::default(), async move {
-//!                 if let Some(mimetype) = get_mimetype(url, client).await {
-//!                     return Ok(format!("{url}: {}", mimetype));
+//!                 let Some(mimetype) = get_mimetype(url, client).await else {
+//!                     return Err(Error::from_str(StatusCode::ExpectationFailed, format!("No content type found for {}", url)));
 //!                 }
-//!                 Err(Error::from_str(StatusCode::ExpectationFailed, format!("No content type found for {}", url)))
+//!                 Ok(format!("{url}: {}", mimetype))
 //!             })
 //!         }
 //!
@@ -62,6 +62,7 @@
 //!                 println!("{}", result.unwrap());
 //!             }
 //!         }
+//!         println("Ended");
 //!         println!("It took {} nanoseconds", now.elapsed().as_nanos());
 //!     })
 //!     .await;
@@ -142,7 +143,7 @@
 //!      while let Some(x) = group.next().await {
 //!         counter += x;
 //!      }
-//! 
+//!
 //!     assert_eq!(counter, 55);
 //!
 //! }).await;
@@ -164,9 +165,9 @@
 //! * Avoid calling long, blocking, non asynchronous functions while using any of the spawn groups because it was built with asynchrony in mind.
 //! * Avoid spawning off an asynchronous function such as calling spawn methods from crate such as tokio, async_std, smol, etc.
 
-pub mod discarding_spawn_group;
-pub mod err_spawn_group;
-pub mod spawn_group;
+mod discarding_spawn_group;
+mod err_spawn_group;
+mod spawn_group;
 
 mod async_runtime;
 mod async_stream;
@@ -177,10 +178,14 @@ mod sleeper;
 mod threadpool_impl;
 mod yield_now;
 
+pub use discarding_spawn_group::DiscardingSpawnGroup;
+pub use err_spawn_group::ErrSpawnGroup;
 pub use executors::block_on;
 pub use meta_types::GetType;
+use shared::initializible::Initializible;
 pub use shared::priority::Priority;
 pub use sleeper::sleep;
+pub use spawn_group::SpawnGroup;
 pub use yield_now::yield_now;
 
 use std::future::Future;
@@ -190,6 +195,8 @@ use std::marker::PhantomData;
 ///
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
+///
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -238,7 +245,7 @@ where
     ResultType: Send + 'static,
 {
     _ = of_type;
-    let task_group = spawn_group::SpawnGroup::<ResultType>::new();
+    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
     body(task_group).await
 }
 
@@ -246,6 +253,8 @@ where
 ///
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
+///
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -289,7 +298,7 @@ where
     Fut: Future<Output = ReturnType> + Send + 'static,
     ResultType: Send + 'static,
 {
-    let task_group = spawn_group::SpawnGroup::<ResultType>::new();
+    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
     body(task_group).await
 }
 
@@ -298,6 +307,8 @@ where
 ///
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
+///
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -392,7 +403,7 @@ where
     ResultType: Send + 'static,
 {
     _ = (of_type, error_type);
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new();
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
     body(task_group).await
 }
 
@@ -401,6 +412,8 @@ where
 ///
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
+///
+/// This function use a threadpoolof the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system  for polling the futures
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -490,13 +503,15 @@ where
     Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
     ResultType: Send + 'static,
 {
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new();
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
     body(task_group).await
 }
 
 /// Starts a scoped closure that takes a mutable ``DiscardingSpawnGroup`` instance as an argument which can execute any number of child tasks which return nothing.
 ///
 /// Ensures that before the function call ends, all spawned tasks are implicitly waited for
+///
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
 ///
 /// See [`DiscardingSpawnGroup`](discarding_spawn_group::DiscardingSpawnGroup)
 /// for more.
@@ -534,6 +549,6 @@ where
     Fut: Future<Output = ReturnType>,
     Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + Send + 'static,
 {
-    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::new();
+    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::init();
     body(discarding_tg).await
 }

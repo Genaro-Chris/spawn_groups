@@ -10,8 +10,9 @@ mod yielder;
 ///
 /// # Examples
 /// ```
-/// spawn_groups::block_on(async {
-///     spawn_groups::yield_now().await;
+/// use spawn_groups::{block_on, yield_now};
+/// block_on(async {
+///     yield_now().await;
 /// });
 /// ```
 pub fn yield_now() -> Yielder {

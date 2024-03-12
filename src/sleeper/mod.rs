@@ -16,7 +16,7 @@ use self::delay::Delay;
 /// use spawn_groups::{block_on, sleep};
 /// use std::time::Duration;
 ///
-/// futures_lite::future::block_on(async {
+/// block_on(async {
 ///     sleep(Duration::from_secs(2)).await;
 /// });
 /// ```

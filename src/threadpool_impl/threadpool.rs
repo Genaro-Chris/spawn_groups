@@ -43,6 +43,25 @@ impl Default for ThreadPool {
 }
 
 impl ThreadPool {
+    pub(crate) fn new(count: usize) -> Self {
+        panic_hook();
+        let queue = ThreadSafeQueue::new();
+        let barrier = Arc::new(Barrier::new(count + 1));
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let handles = (0..count)
+            .map(|index| start(index, queue.clone(), barrier.clone(), stop_flag.clone()))
+            .collect();
+        ThreadPool {
+            handles,
+            queue,
+            count,
+            barrier,
+            stop_flag,
+        }
+    }
+}
+
+impl ThreadPool {
     pub fn submit<Task>(&self, task: Task)
     where
         Task: FnOnce() + 'static + Send,

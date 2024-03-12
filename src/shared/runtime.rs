@@ -34,6 +34,17 @@ impl<ItemType> Initializible for RuntimeEngine<ItemType> {
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
+    pub(crate) fn new(count: usize) -> Self {
+        Self {
+            tasks: Arc::new(Mutex::new(vec![])),
+            stream: AsyncStream::new(),
+            runtime: Executor::new(count),
+            wait_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn cancel(&mut self) {
         self.store(true);
         self.runtime.cancel();

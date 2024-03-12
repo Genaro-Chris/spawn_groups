@@ -4,12 +4,15 @@ use crate::shared::{
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
 };
-use std::task::{Context, Poll};
-use std::{future::Future, pin::Pin};
 
 /// Err Spawn Group
 ///
@@ -35,8 +38,18 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
 }
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
-    pub(crate) fn new() -> Self {
-        Self::init()
+    /// Instantiates `ErrSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
+    /// 
+    /// # Parameters
+    ///
+    /// * `num_of_threads`: number of threads to use
+    pub fn new(num_of_threads: usize) -> Self {
+        Self {
+            is_cancelled: false,
+            count: Arc::new(AtomicUsize::new(0)),
+            runtime: RuntimeEngine::new(num_of_threads),
+            wait_at_drop: false,
+        }
     }
 }
 
@@ -98,7 +111,6 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
         self.runtime.stream()
     }
 }
-
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
