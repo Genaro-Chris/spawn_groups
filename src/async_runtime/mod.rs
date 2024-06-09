@@ -1,5 +1,4 @@
-pub(crate) mod executor;
+pub(crate) mod exec;
 pub(crate) mod notifier;
-pub(crate) mod task;
-mod task_queue;
 mod pin_macro;
+pub(crate) mod task;

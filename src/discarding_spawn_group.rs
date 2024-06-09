@@ -1,5 +1,5 @@
 use crate::shared::{
-    initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
+    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
 };
 
 use std::future::Future;
@@ -133,12 +133,3 @@ impl Shared for DiscardingSpawnGroup {
     }
 }
 
-impl Initializible for DiscardingSpawnGroup {
-    fn init() -> Self {
-        DiscardingSpawnGroup {
-            is_cancelled: false,
-            runtime: RuntimeEngine::init(),
-            wait_at_drop: true,
-        }
-    }
-}

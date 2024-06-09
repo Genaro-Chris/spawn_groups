@@ -182,7 +182,6 @@ pub use discarding_spawn_group::DiscardingSpawnGroup;
 pub use err_spawn_group::ErrSpawnGroup;
 pub use executors::block_on;
 pub use meta_types::GetType;
-use shared::initializible::Initializible;
 pub use shared::priority::Priority;
 pub use sleeper::sleep;
 pub use spawn_group::SpawnGroup;
@@ -190,6 +189,7 @@ pub use yield_now::yield_now;
 
 use std::future::Future;
 use std::marker::PhantomData;
+use std::thread::available_parallelism;
 
 /// Starts a scoped closure that takes a mutable ``SpawnGroup`` instance as an argument which can execute any number of child tasks which its result values are of the generic ``ResultType`` type.
 ///
@@ -244,8 +244,14 @@ where
     Fut: Future<Output = ReturnType> + Send + 'static,
     ResultType: Send + 'static,
 {
+    let count: usize;
+    if let Ok(thread_count) = available_parallelism() {
+        count = thread_count.get();
+    } else {
+        count = 1;
+    }
     _ = of_type;
-    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
+    let task_group = spawn_group::SpawnGroup::<ResultType>::new(count);
     body(task_group).await
 }
 
@@ -298,7 +304,13 @@ where
     Fut: Future<Output = ReturnType> + Send + 'static,
     ResultType: Send + 'static,
 {
-    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
+    let count: usize;
+    if let Ok(thread_count) = available_parallelism() {
+        count = thread_count.get();
+    } else {
+        count = 1;
+    }
+    let task_group = spawn_group::SpawnGroup::<ResultType>::new(count);
     body(task_group).await
 }
 
@@ -402,8 +414,14 @@ where
     Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
     ResultType: Send + 'static,
 {
+    let count: usize;
+    if let Ok(thread_count) = available_parallelism() {
+        count = thread_count.get();
+    } else {
+        count = 1;
+    }
     _ = (of_type, error_type);
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new(count);
     body(task_group).await
 }
 
@@ -503,7 +521,13 @@ where
     Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
     ResultType: Send + 'static,
 {
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
+    let count: usize;
+    if let Ok(thread_count) = available_parallelism() {
+        count = thread_count.get();
+    } else {
+        count = 1;
+    }
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new(count);
     body(task_group).await
 }
 
@@ -549,6 +573,12 @@ where
     Fut: Future<Output = ReturnType>,
     Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + Send + 'static,
 {
-    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::init();
+    let count: usize;
+    if let Ok(thread_count) = available_parallelism() {
+        count = thread_count.get();
+    } else {
+        count = 1;
+    }
+    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::new(count);
     body(discarding_tg).await
 }

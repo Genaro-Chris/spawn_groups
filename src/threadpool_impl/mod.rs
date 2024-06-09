@@ -1,11 +1,9 @@
-mod iteratorimpl;
-mod queue;
-mod queueops;
-mod threadpool;
+mod channel;
+mod index;
 mod thread;
+mod threadpool;
 
 pub(crate) type Func = dyn FnOnce() + Send;
 
-pub(crate) use queue::ThreadSafeQueue;
-pub(crate) use queueops::QueueOperation;
+pub(crate) use channel::Channel;
 pub(crate) use threadpool::ThreadPool;

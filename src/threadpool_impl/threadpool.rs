@@ -1,62 +1,24 @@
-use std::{
-    backtrace, panic,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Barrier,
-    },
-    thread,
-};
+use std::sync::{Arc, Barrier};
 
-use super::{queueops::QueueOperation, thread::UniqueThread, Func, ThreadSafeQueue};
+use super::{index::Indexer, thread::UniqueThread};
 
 pub struct ThreadPool {
     handles: Vec<UniqueThread>,
-    count: usize,
-    queue: ThreadSafeQueue<QueueOperation<Func>>,
+    indexer: Indexer,
     barrier: Arc<Barrier>,
-    stop_flag: Arc<AtomicBool>,
-}
-
-impl Default for ThreadPool {
-    fn default() -> Self {
-        panic_hook();
-        let queue = ThreadSafeQueue::new();
-        let count: usize;
-        if let Ok(thread_count) = thread::available_parallelism() {
-            count = thread_count.get();
-        } else {
-            count = 1;
-        }
-        let barrier = Arc::new(Barrier::new(count + 1));
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let handles = (0..count)
-            .map(|index| start(index, queue.clone(), barrier.clone(), stop_flag.clone()))
-            .collect();
-        ThreadPool {
-            handles,
-            queue,
-            count,
-            barrier,
-            stop_flag,
-        }
-    }
 }
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        panic_hook();
-        let queue = ThreadSafeQueue::new();
-        let barrier = Arc::new(Barrier::new(count + 1));
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let handles = (0..count)
-            .map(|index| start(index, queue.clone(), barrier.clone(), stop_flag.clone()))
-            .collect();
+        let mut handles = vec![];
+        handles.reserve(count);
+        for _ in 1..=count {
+            handles.push(UniqueThread::new());
+        }
         ThreadPool {
             handles,
-            queue,
-            count,
-            barrier,
-            stop_flag,
+            indexer: Indexer::new(count),
+            barrier: Arc::new(Barrier::new(count + 1)),
         }
     }
 }
@@ -66,68 +28,30 @@ impl ThreadPool {
     where
         Task: FnOnce() + 'static + Send,
     {
-        self.queue.enqueue(QueueOperation::Ready(Box::new(task)));
+        self.handles[self.indexer.next()].submit(task);
+    }
+
+    pub fn clear(&self) {
+        self.handles.iter().for_each(|handles| handles.clear());
     }
 }
 
 impl ThreadPool {
     pub fn wait_for_all(&self) {
-        for _ in 0..self.count {
-            self.queue.enqueue(QueueOperation::Wait);
-        }
+        self.handles.iter().for_each(|handle| {
+            let barrier = self.barrier.clone();
+            handle.submit(move || {
+                barrier.wait();
+            });
+        });
         self.barrier.wait();
-    }
-}
-
-impl ThreadPool {
-    fn cancel_all(&self) {
-        self.stop_flag
-            .store(true, std::sync::atomic::Ordering::Release)
     }
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        _ = panic::take_hook();
-        self.cancel_all();
         while let Some(handle) = self.handles.pop() {
-            handle.join();
+            handle.join()
         }
     }
-}
-
-fn start(
-    index: usize,
-    queue: ThreadSafeQueue<QueueOperation<Func>>,
-    barrier: Arc<Barrier>,
-    stop_flag: Arc<AtomicBool>,
-) -> UniqueThread {
-    UniqueThread::new(format!("ThreadPool #{}", index), move || {
-        for op in queue {
-            match (op, stop_flag.load(Ordering::Acquire)) {
-                (QueueOperation::NotYet, false) => continue,
-                (QueueOperation::Ready(work), false) => {
-                    work();
-                }
-                (QueueOperation::Wait, false) => _ = barrier.wait(),
-                _ => {
-                    return;
-                }
-            }
-        }
-    })
-}
-
-fn panic_hook() {
-    panic::set_hook(Box::new(move |info: &panic::PanicInfo<'_>| {
-        let msg = format!(
-            "{} panicked at location {} with {} \nBacktrace:\n{}",
-            thread::current().name().unwrap(),
-            info.location().unwrap(),
-            info.to_string().split('\n').collect::<Vec<_>>()[1],
-            backtrace::Backtrace::capture()
-        );
-        eprintln!("{}", msg);
-        _ = panic::take_hook();
-    }));
 }

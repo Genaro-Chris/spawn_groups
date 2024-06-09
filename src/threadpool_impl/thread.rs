@@ -1,23 +1,40 @@
-use std::thread;
+use std::thread::{spawn, JoinHandle};
+
+use super::{Channel, Func};
 
 pub(crate) struct UniqueThread {
-    handle: thread::JoinHandle<()>,
+    channel: Channel<Box<Func>>,
+    handle: JoinHandle<()>,
 }
 
 impl UniqueThread {
-    pub(crate) fn new<Task: FnOnce() + Send + 'static>(name: String, task: Task) -> Self {
-        let handle = thread::Builder::new()
-            .name(name)
-            .spawn(move || {
-                task();
-            })
-            .unwrap();
-        UniqueThread { handle }
+    pub(crate) fn new() -> Self {
+        let channel: Channel<Box<dyn FnOnce() + Send>> = Channel::new();
+        let chan = channel.clone();
+        let handle = spawn(move || {
+            while let Some(ops) = chan.dequeue() {
+                ops()
+            }
+        });
+        UniqueThread { channel, handle }
     }
 }
 
 impl UniqueThread {
     pub(crate) fn join(self) {
-        _ = self.handle.join();
+        self.channel.close();
+        self.channel.clear();
+        _ = self.handle.join().unwrap();
+    }
+
+    pub(crate) fn submit<Task>(&self, task: Task)
+    where
+        Task: FnOnce() + Send + 'static,
+    {
+        self.channel.enqueue(Box::new(task));
+    }
+
+    pub(crate) fn clear(&self) {
+        self.channel.clear();
     }
 }

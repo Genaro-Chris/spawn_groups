@@ -1,5 +1,5 @@
 use crate::shared::{
-    initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
+    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
     wait::Waitable,
 };
 use async_trait::async_trait;
@@ -197,17 +197,6 @@ impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
             self.runtime.wait_for_all_tasks();
         } else {
             self.runtime.end()
-        }
-    }
-}
-
-impl<ValueType: Send> Initializible for SpawnGroup<ValueType> {
-    fn init() -> Self {
-        SpawnGroup {
-            runtime: RuntimeEngine::init(),
-            is_cancelled: false,
-            count: Arc::new(AtomicUsize::new(0)),
-            wait_at_drop: true,
         }
     }
 }
