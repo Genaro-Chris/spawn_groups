@@ -41,4 +41,4 @@ jobs:
      - name: Test 
        run: cargo test
      - name: Miri Test
-       run: cargo miri Test
+       run: cargo miri test
