@@ -1,10 +1,9 @@
-use parking_lot::Mutex;
 use std::{
     future::Future,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     task::Poll,
 };
@@ -30,7 +29,7 @@ impl Task {
     }
 
     fn complete(&self) {
-        self.complete.store(true, Ordering::Release);
+        self.complete.store(true, Ordering::Relaxed);
     }
 }
 
@@ -40,7 +39,7 @@ impl Future for Task {
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        match self.future.lock().as_mut().poll(cx) {
+        match self.future.lock().unwrap().as_mut().poll(cx) {
             Poll::Ready(()) => {
                 self.complete();
                 Poll::Ready(())

@@ -19,8 +19,11 @@ pub(crate) fn block_on_task(task: Task, notifier: Arc<Notifier>, waker: &Waker) 
         return;
     }
     let mut context: Context<'_> = Context::from_waker(waker);
+    let Ok(mut task) = task.future.lock() else {
+        return;
+    };
     loop {
-        match task.future.lock().as_mut().poll(&mut context) {
+        match task.as_mut().poll(&mut context) {
             std::task::Poll::Ready(()) => return,
             std::task::Poll::Pending => notifier.wait(),
         }

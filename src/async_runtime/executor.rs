@@ -9,7 +9,10 @@ use cooked_waker::IntoWaker;
 
 use std::{
     future::Future,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::{Context, Poll, Waker},
 };
 
@@ -17,6 +20,7 @@ use std::{
 pub struct Executor {
     pool: Arc<ThreadPool>,
     queue: Channel<Task>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Executor {
@@ -24,8 +28,9 @@ impl Executor {
         let result: Executor = Self {
             pool: Arc::new(ThreadPool::new(count)),
             queue: Channel::new(),
+            cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let result_clone = result.clone();
+        let result_clone: Executor = result.clone();
         std::thread::spawn(move || {
             result_clone.run();
         });
@@ -45,22 +50,25 @@ impl Executor {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let task = Task::new(task);
+        let task: Task = Task::new(task);
         self.queue.enqueue(task.clone());
         task
     }
 
     pub(crate) fn cancel(&self) {
-        self.pool.clear();
         self.queue.clear();
+        self.cancelled.store(true, Ordering::Relaxed);
         self.poll_all();
-        self.pool.clear();
         self.queue.clear();
+        self.cancelled.store(false, Ordering::Relaxed);
     }
 
     fn run(&self) {
         while let Some(task) = self.queue.dequeue() {
-            let queue = self.queue.clone();
+            if self.cancelled.load(Ordering::Acquire) {
+                continue;
+            }
+            let queue: Channel<Task> = self.queue.clone();
             self.submit(move || {
                 let waker: Waker = Arc::new(Notifier::default()).into_waker();
                 pin_future!(task);
@@ -80,8 +88,7 @@ impl Executor {
     }
 
     pub(crate) fn end(&mut self) {
-        self.queue.clear();
         self.queue.close();
-        //self.pool.drop_pool();
+        self.queue.clear();
     }
 }

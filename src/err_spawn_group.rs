@@ -1,6 +1,5 @@
 use crate::shared::{
-    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
-    wait::Waitable,
+    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared, wait::Waitable,
 };
 use async_trait::async_trait;
 use futures_lite::{Stream, StreamExt};
@@ -39,7 +38,7 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Instantiates `ErrSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
-    /// 
+    ///
     /// # Parameters
     ///
     /// * `num_of_threads`: number of threads to use
@@ -48,7 +47,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
             is_cancelled: false,
             count: Arc::new(AtomicUsize::new(0)),
             runtime: RuntimeEngine::new(num_of_threads),
-            wait_at_drop: false,
+            wait_at_drop: true,
         }
     }
 }
@@ -129,7 +128,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 
     fn decrement_count_to_zero(&self) {
-        self.count.store(0, Ordering::Release);
+        self.count.store(0, Ordering::Relaxed);
     }
 }
 
@@ -199,9 +198,8 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueTyp
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
-        } else {
-            self.runtime.end()
         }
+        self.runtime.end()
     }
 }
 

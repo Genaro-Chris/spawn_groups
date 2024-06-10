@@ -71,7 +71,7 @@ impl<ItemType> AsyncStream<ItemType> {
 
     pub(crate) fn cancel_tasks(&mut self) {
         self.cancelled = true;
-        self.counts.1.store(0, Ordering::Release);
+        self.counts.1.store(0, Ordering::Relaxed);
     }
 }
 

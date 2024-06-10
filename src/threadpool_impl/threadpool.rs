@@ -10,7 +10,7 @@ pub struct ThreadPool {
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        let mut handles = vec![];
+        let mut handles: Vec<UniqueThread> = vec![];
         handles.reserve(count);
         for _ in 1..=count {
             handles.push(UniqueThread::new());
@@ -30,16 +30,12 @@ impl ThreadPool {
     {
         self.handles[self.indexer.next()].submit(task);
     }
-
-    pub fn clear(&self) {
-        self.handles.iter().for_each(|handles| handles.clear());
-    }
 }
 
 impl ThreadPool {
     pub fn wait_for_all(&self) {
         self.handles.iter().for_each(|handle| {
-            let barrier = self.barrier.clone();
+            let barrier: Arc<Barrier> = self.barrier.clone();
             handle.submit(move || {
                 barrier.wait();
             });

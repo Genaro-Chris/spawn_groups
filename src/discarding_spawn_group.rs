@@ -1,6 +1,4 @@
-use crate::shared::{
-    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
-};
+use crate::shared::{priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared};
 
 use std::future::Future;
 
@@ -34,7 +32,7 @@ impl DiscardingSpawnGroup {
 
 impl DiscardingSpawnGroup {
     /// Instantiates `DiscardingSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
-    /// 
+    ///
     /// # Parameters
     ///
     /// * `num_of_threads`: number of threads to use
@@ -42,7 +40,7 @@ impl DiscardingSpawnGroup {
         Self {
             is_cancelled: false,
             runtime: RuntimeEngine::new(num_of_threads),
-            wait_at_drop: false,
+            wait_at_drop: true,
         }
     }
 }
@@ -102,9 +100,8 @@ impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
-        } else {
-            self.runtime.end()
         }
+        self.runtime.end()
     }
 }
 
@@ -132,4 +129,3 @@ impl Shared for DiscardingSpawnGroup {
         self.is_cancelled = true;
     }
 }
-

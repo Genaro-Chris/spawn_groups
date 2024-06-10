@@ -1,18 +1,14 @@
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[derive(Clone)]
 pub(crate) struct Indexer {
-    index: Arc<AtomicUsize>,
+    index: AtomicUsize,
     last_index: usize,
 }
 
 impl Indexer {
     pub(crate) fn new(count: usize) -> Self {
         Indexer {
-            index: Arc::new(AtomicUsize::new(0)),
+            index: AtomicUsize::new(0),
             last_index: count - 1,
         }
     }
