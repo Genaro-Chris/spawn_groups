@@ -1,23 +1,30 @@
-use std::sync::{Arc, Barrier};
+use std::{
+    backtrace, panic, sync::{Arc, Barrier}, thread::spawn
+};
 
-use super::{index::Indexer, thread::UniqueThread};
+use super::{Channel, Func};
 
 pub struct ThreadPool {
-    handles: Vec<UniqueThread>,
-    indexer: Indexer,
+    task_channel: Channel<Box<Func>>,
     barrier: Arc<Barrier>,
+    count: usize,
 }
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        let mut handles: Vec<UniqueThread> = vec![];
-        handles.reserve(count);
+        let task_channel: Channel<Box<Func>> = Channel::new();
         for _ in 1..=count {
-            handles.push(UniqueThread::new());
+            let channel: Channel<Box<Func>> = task_channel.clone();
+            spawn(move || {
+                panic_hook();
+                while let Some(ops) = channel.dequeue() {
+                    ops()
+                }
+            });
         }
         ThreadPool {
-            handles,
-            indexer: Indexer::new(count),
+            task_channel,
+            count,
             barrier: Arc::new(Barrier::new(count + 1)),
         }
     }
@@ -28,17 +35,17 @@ impl ThreadPool {
     where
         Task: FnOnce() + 'static + Send,
     {
-        self.handles[self.indexer.next()].submit(task);
+        self.task_channel.enqueue(Box::new(task));
     }
 }
 
 impl ThreadPool {
     pub fn wait_for_all(&self) {
-        self.handles.iter().for_each(|handle| {
+        (1..=self.count).for_each(|_| {
             let barrier: Arc<Barrier> = self.barrier.clone();
-            handle.submit(move || {
+            self.task_channel.enqueue(Box::new(move || {
                 barrier.wait();
-            });
+            }));
         });
         self.barrier.wait();
     }
@@ -46,8 +53,27 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        while let Some(handle) = self.handles.pop() {
-            handle.join()
-        }
+        _ = panic::take_hook();
+        self.task_channel.close();
+        self.clear()
     }
+}
+
+impl ThreadPool {
+    pub fn clear(&self) {
+        self.task_channel.clear();
+    }
+}
+
+fn panic_hook() {
+    panic::set_hook(Box::new(move |info: &panic::PanicInfo<'_>| {
+        let msg = format!(
+            "Threadpool panicked at location {} with {} \nBacktrace:\n{}",
+            info.location().unwrap(),
+            info.to_string().split('\n').collect::<Vec<_>>()[1],
+            backtrace::Backtrace::capture()
+        );
+        eprintln!("{}", msg);
+        _ = panic::take_hook();
+    }));
 }

@@ -13,7 +13,7 @@ type LocalBoxedFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 #[derive(Clone)]
 pub struct Task {
     pub(crate) future: Arc<Mutex<LocalBoxedFuture>>,
-    pub(crate) complete: Arc<AtomicBool>,
+    complete: Arc<AtomicBool>,
 }
 
 impl Task {
@@ -28,7 +28,7 @@ impl Task {
         self.complete.load(Ordering::Acquire)
     }
 
-    fn complete(&self) {
+    pub(crate) fn complete(&self) {
         self.complete.store(true, Ordering::Relaxed);
     }
 }

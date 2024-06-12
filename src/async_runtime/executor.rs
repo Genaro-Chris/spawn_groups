@@ -1,7 +1,4 @@
-use crate::{
-    pin_future,
-    threadpool_impl::{Channel, ThreadPool},
-};
+use crate::{pin_future, threadpool_impl::ThreadPool};
 
 use super::{notifier::Notifier, task::Task};
 
@@ -16,10 +13,8 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-#[derive(Clone)]
 pub struct Executor {
     pool: Arc<ThreadPool>,
-    queue: Channel<Task>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -27,13 +22,8 @@ impl Executor {
     pub(crate) fn new(count: usize) -> Self {
         let result: Executor = Self {
             pool: Arc::new(ThreadPool::new(count)),
-            queue: Channel::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let result_clone: Executor = result.clone();
-        std::thread::spawn(move || {
-            result_clone.run();
-        });
         result
     }
 }
@@ -51,44 +41,47 @@ impl Executor {
         F: Future<Output = ()> + Send + 'static,
     {
         let task: Task = Task::new(task);
-        self.queue.enqueue(task.clone());
+        self.spawn_task(task.clone());
         task
     }
 
-    pub(crate) fn cancel(&self) {
-        self.queue.clear();
-        self.cancelled.store(true, Ordering::Relaxed);
-        self.poll_all();
-        self.queue.clear();
-        self.cancelled.store(false, Ordering::Relaxed);
+    fn spawn_task(&self, task: Task) {
+        let executor = self.clone();
+        if self.cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        self.submit(move || {
+            let waker: Waker = Arc::new(Notifier::default()).into_waker();
+            pin_future!(task);
+            let mut cx: Context<'_> = Context::from_waker(&waker);
+            match task.as_mut().poll(&mut cx) {
+                Poll::Ready(()) => task.complete(),
+                Poll::Pending => {
+                    cx.waker().wake_by_ref();
+                    executor.spawn_task(task.clone());
+                }
+            }
+        });
     }
 
-    fn run(&self) {
-        while let Some(task) = self.queue.dequeue() {
-            if self.cancelled.load(Ordering::Acquire) {
-                continue;
-            }
-            let queue: Channel<Task> = self.queue.clone();
-            self.submit(move || {
-                let waker: Waker = Arc::new(Notifier::default()).into_waker();
-                pin_future!(task);
-                let mut cx: Context<'_> = Context::from_waker(&waker);
-                match task.as_mut().poll(&mut cx) {
-                    Poll::Ready(()) => (),
-                    Poll::Pending => {
-                        queue.enqueue(task.clone());
-                    }
-                }
-            });
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            cancelled: self.cancelled.clone(),
         }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.pool.clear();
+        self.cancelled.store(true, Ordering::Relaxed);
+        self.poll_all();
+        self.pool.clear();
+        self.cancelled.store(false, Ordering::Relaxed);
     }
 
     pub(crate) fn poll_all(&self) {
         self.pool.wait_for_all();
     }
 
-    pub(crate) fn end(&mut self) {
-        self.queue.close();
-        self.queue.clear();
-    }
+    pub(crate) fn end(&mut self) {}
 }

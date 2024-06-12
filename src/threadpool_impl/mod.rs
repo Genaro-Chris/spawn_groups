@@ -1,6 +1,4 @@
 mod channel;
-mod index;
-mod thread;
 mod threadpool;
 
 pub(crate) type Func = dyn FnOnce() + Send;

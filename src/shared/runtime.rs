@@ -72,17 +72,14 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
     {
         self.stream.increment();
         let mut stream: AsyncStream<ItemType> = self.stream();
-        let runtime = self.runtime.clone();
         let tasks: Arc<Mutex<Vec<(Priority, Task)>>> = self.tasks.clone();
-        self.runtime.submit(move || {
-            tasks.lock().unwrap().push((
-                priority,
-                runtime.spawn(async move {
-                    stream.insert_item(task.await).await;
-                    stream.decrement_task_count();
-                }),
-            ));
-        });
+        tasks.lock().unwrap().push((
+            priority,
+            self.runtime.spawn(async move {
+                stream.insert_item(task.await).await;
+                stream.decrement_task_count();
+            }),
+        ));
     }
 }
 
