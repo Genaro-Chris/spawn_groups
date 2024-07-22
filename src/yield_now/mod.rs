@@ -18,3 +18,17 @@ mod yielder;
 pub fn yield_now() -> Yielder {
     Yielder::default()
 }
+
+/// Resolves to the provided value.
+///
+/// # Examples
+/// ```
+/// use spawn_groups::{block_on, ready};
+/// block_on(async {
+///     let ten = ready(10).await;
+///     assert_eq!(ten, 10);
+/// });
+/// ```
+pub async fn ready<ValueType>(val: ValueType) -> ValueType {
+    val
+}

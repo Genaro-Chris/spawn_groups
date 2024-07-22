@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     pin::Pin,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     task::{Context, Poll},
@@ -15,16 +15,17 @@ use crate::executors::block_on;
 
 pub struct AsyncStream<ItemType> {
     buffer: Arc<Mutex<VecDeque<ItemType>>>,
-    started: bool,
-    counts: (Arc<AtomicUsize>, Arc<AtomicUsize>),
-    cancelled: bool,
+    item_count: Arc<AtomicUsize>,
+    task_count: Arc<AtomicUsize>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn insert_item(&mut self, value: ItemType) {
-        if !self.started {
-            self.started = true;
-        }
+    #[inline]
+    pub(crate) async fn insert_item(&self, value: ItemType) {
+        _ = self
+            .cancelled
+            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed);
         self.buffer.lock().await.push_back(value);
     }
 }
@@ -37,41 +38,33 @@ impl<ItemType> AsyncStream<ItemType> {
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn increment(&self) {
-        self.counts.0.fetch_add(1, Ordering::Acquire);
-        self.counts.1.fetch_add(1, Ordering::Acquire);
+        self.task_count.fetch_add(1, Ordering::SeqCst);
+        self.item_count.fetch_add(1, Ordering::SeqCst);
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) async fn first(&mut self) -> Option<ItemType> {
+    pub async fn first(&mut self) -> Option<ItemType> {
         self.next().await
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn task_count(&self) -> usize {
-        self.counts.1.load(Ordering::Acquire)
+        self.task_count.load(Ordering::Acquire)
     }
 
     pub(crate) fn decrement_task_count(&self) {
-        if self.task_count() > 0 {
-            self.counts.1.fetch_sub(1, Ordering::Acquire);
-        }
+        self.task_count.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub(crate) fn item_count(&self) -> usize {
-        self.counts.0.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn decrement_count(&self) {
-        if self.item_count() > 0 {
-            self.counts.0.fetch_sub(1, Ordering::Acquire);
-        }
+        self.item_count.load(Ordering::Acquire)
     }
 
     pub(crate) fn cancel_tasks(&mut self) {
-        self.cancelled = true;
-        self.counts.1.store(0, Ordering::Relaxed);
+        self.cancelled.store(true, Ordering::Release);
+        self.task_count.store(0, Ordering::Release);
     }
 }
 
@@ -79,9 +72,9 @@ impl<ItemType> Clone for AsyncStream<ItemType> {
     fn clone(&self) -> Self {
         Self {
             buffer: self.buffer.clone(),
-            started: self.started,
-            counts: self.counts.clone(),
-            cancelled: self.cancelled,
+            task_count: self.task_count.clone(),
+            item_count: self.item_count.clone(),
+            cancelled: self.cancelled.clone(),
         }
     }
 }
@@ -90,9 +83,9 @@ impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn new() -> Self {
         AsyncStream::<ItemType> {
             buffer: Arc::new(Mutex::new(VecDeque::new())),
-            started: false,
-            counts: (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))),
-            cancelled: false,
+            item_count: Arc::new(AtomicUsize::new(0)),
+            task_count: Arc::new(AtomicUsize::new(0)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -103,14 +96,16 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         block_on(async move {
             let mut inner_lock: MutexGuard<'_, VecDeque<ItemType>> = self.buffer.lock().await;
-            if self.cancelled && inner_lock.is_empty() || self.item_count() == 0 {
+            if self.cancelled.load(Ordering::Relaxed) && inner_lock.is_empty()
+                || self.item_count() == 0
+            {
                 return Poll::Ready(None);
             }
             let Some(value) = inner_lock.pop_front() else {
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             };
-            self.decrement_count();
+            self.item_count.fetch_sub(1, Ordering::SeqCst);
             Poll::Ready(Some(value))
         })
     }

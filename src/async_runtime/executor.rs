@@ -1,8 +1,9 @@
-use crate::{pin_future, threadpool_impl::ThreadPool};
+use crate::{
+    executors::{IntoWaker, Notifier},
+    threadpool_impl::{Channel, ThreadPool},
+};
 
-use super::{notifier::Notifier, task::Task};
-
-use cooked_waker::IntoWaker;
+use super::task::Task;
 
 use std::{
     future::Future,
@@ -16,6 +17,7 @@ use std::{
 pub struct Executor {
     pool: Arc<ThreadPool>,
     cancelled: Arc<AtomicBool>,
+    task_queue: Channel<Task>,
 }
 
 impl Executor {
@@ -23,12 +25,30 @@ impl Executor {
         let result: Executor = Self {
             pool: Arc::new(ThreadPool::new(count)),
             cancelled: Arc::new(AtomicBool::new(false)),
+            task_queue: Channel::new(),
         };
+        result.start();
         result
     }
 }
 
 impl Executor {
+    fn start(&self) {
+        let queue = self.task_queue.clone();
+        let cancelled = self.cancelled.clone();
+        let pool = self.pool.clone();
+        std::thread::spawn(move || loop {
+            let Some(task) = queue.clone().dequeue() else {
+                return;
+            };
+            if cancelled.load(Ordering::Relaxed) || task.is_cancelled() {
+                continue;
+            }
+            let queue = queue.clone();
+            pool.submit(move || block_task_with(task, &queue))
+        });
+    }
+
     pub(crate) fn submit<Task>(&self, task: Task)
     where
         Task: FnOnce() + Send + 'static,
@@ -41,34 +61,8 @@ impl Executor {
         F: Future<Output = ()> + Send + 'static,
     {
         let task: Task = Task::new(task);
-        self.spawn_task(task.clone());
+        self.task_queue.enqueue(task.clone());
         task
-    }
-
-    fn spawn_task(&self, task: Task) {
-        let executor = self.clone();
-        if self.cancelled.load(Ordering::Acquire) {
-            return;
-        }
-        self.submit(move || {
-            let waker: Waker = Arc::new(Notifier::default()).into_waker();
-            pin_future!(task);
-            let mut cx: Context<'_> = Context::from_waker(&waker);
-            match task.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => task.complete(),
-                Poll::Pending => {
-                    cx.waker().wake_by_ref();
-                    executor.spawn_task(task.clone());
-                }
-            }
-        });
-    }
-
-    fn clone(&self) -> Self {
-        Self {
-            pool: self.pool.clone(),
-            cancelled: self.cancelled.clone(),
-        }
     }
 
     pub(crate) fn cancel(&self) {
@@ -83,5 +77,54 @@ impl Executor {
         self.pool.wait_for_all();
     }
 
-    pub(crate) fn end(&mut self) {}
+    pub(crate) fn end(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.task_queue.close();
+        self.pool.end();
+    }
+}
+
+thread_local! {
+    static TASK_WAKER: Waker = {
+        Arc::new(Notifier::default()).into_waker()
+    };
+}
+
+fn block_task_with(future: Task, queue: &Channel<Task>) {
+    if future.is_completed() || future.is_cancelled() {
+        return;
+    }
+    let task = future.clone();
+    let waker_result = TASK_WAKER.try_with(|waker| waker.clone());
+    match waker_result {
+        Ok(waker) => {
+            let mut context: Context<'_> = Context::from_waker(&waker);
+            let Ok(mut future) = future.lock() else {
+                return;
+            };
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(()) => task.complete(),
+                Poll::Pending => {
+                    if !task.is_cancelled() {
+                        queue.enqueue(task.clone());
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            let waker: Waker = Arc::new(Notifier::default()).into_waker();
+            let mut context: Context<'_> = Context::from_waker(&waker);
+            let Ok(mut future) = future.lock() else {
+                return;
+            };
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(()) => task.complete(),
+                Poll::Pending => {
+                    if !task.is_cancelled() {
+                        queue.enqueue(task.clone());
+                    }
+                }
+            }
+        }
+    }
 }

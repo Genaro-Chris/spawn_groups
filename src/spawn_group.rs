@@ -102,8 +102,14 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
 
 impl<ValueType: Send> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish.
-    pub async fn wait_for_all(&self) {
+    pub async fn wait_for_all(&mut self) {
         self.wait().await;
+    }
+
+    /// Waits for all remaining child tasks for finish in non async context.
+    pub fn wait_non_async(&mut self) {
+        self.runtime.wait_for_all_tasks();
+        self.decrement_count_to_zero()
     }
 }
 

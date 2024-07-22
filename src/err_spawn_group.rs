@@ -116,6 +116,12 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     pub async fn wait_for_all(&mut self) {
         self.wait().await;
     }
+
+    /// Waits for all remaining child tasks for finish in non async context.
+    pub fn wait_non_async(&mut self) {
+        self.runtime.wait_for_all_tasks();
+        self.decrement_count_to_zero()
+    }
 }
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {

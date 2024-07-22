@@ -185,6 +185,7 @@ pub use meta_types::GetType;
 pub use shared::priority::Priority;
 pub use sleeper::sleep;
 pub use spawn_group::SpawnGroup;
+pub use yield_now::ready;
 pub use yield_now::yield_now;
 
 use std::future::Future;

@@ -1,14 +1,12 @@
 use std::{
     cell::RefCell,
+    future::Future,
     task::{Context, Poll, Waker},
 };
 
-use crate::{
-    async_runtime::task::Task,
-    executors::parker::{pair, Parker},
-};
+use crate::{executors::waker::waker_helper, pin_future};
 
-use super::waker::waker_helper;
+use super::parker::{pair, Parker};
 
 fn parker_and_waker() -> (Parker, Waker) {
     let (parker, unparker) = pair();
@@ -18,27 +16,31 @@ fn parker_and_waker() -> (Parker, Waker) {
     (parker, waker)
 }
 
-pub(crate) fn block_task(task: Task) {
-    if task.is_completed() {
-        return;
-    }
-
+/// Blocks the current thread until the future is polled to finish.
+///
+/// Example
+/// ```rust
+/// let result = spawn_groups::block_on(async {
+///     println!("This is an async executor");
+///     1
+/// });
+/// assert_eq!(result, 1);
+/// ```
+///
+pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
+    pin_future!(future);
     thread_local! {
-        static TASK_PAIR: RefCell<(Parker, Waker)> = {
+        static WAKER_PAIR: RefCell<(Parker, Waker)> = {
             RefCell::new(parker_and_waker())
         };
     }
-
-    TASK_PAIR.with(|waker_pair| match waker_pair.try_borrow_mut() {
+    return WAKER_PAIR.with(|waker_pair| match waker_pair.try_borrow_mut() {
         Ok(waker_pair) => {
-            let (parker, ref waker) = &*waker_pair;
+            let (parker, waker) = &*waker_pair;
             let mut context: Context<'_> = Context::from_waker(waker);
-            let Ok(mut task) = task.lock() else {
-                return;
-            };
             loop {
-                match task.as_mut().poll(&mut context) {
-                    Poll::Ready(()) => return,
+                match future.as_mut().poll(&mut context) {
+                    Poll::Ready(output) => return output,
                     Poll::Pending => parker.park(),
                 }
             }
@@ -49,12 +51,9 @@ pub(crate) fn block_task(task: Task) {
                 unparker.unpark();
             });
             let mut context: Context<'_> = Context::from_waker(&waker);
-            let Ok(mut task) = task.lock() else {
-                return;
-            };
             loop {
-                match task.as_mut().poll(&mut context) {
-                    Poll::Ready(()) => return,
+                match future.as_mut().poll(&mut context) {
+                    Poll::Ready(output) => return output,
                     Poll::Pending => parker.park(),
                 }
             }

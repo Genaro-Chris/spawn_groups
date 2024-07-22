@@ -6,23 +6,23 @@ use std::{
     },
 };
 
-#[derive(Default)]
 pub struct Channel<ItemType> {
     pair: Arc<(Mutex<VecDeque<ItemType>>, Condvar)>,
     closed: Arc<AtomicBool>,
 }
 
 impl<ItemType> Channel<ItemType> {
-    pub fn enqueue(&self, value: ItemType) -> bool {
+    pub(crate) fn enqueue(&self, value: ItemType) {
         if self.closed.load(Ordering::Relaxed) {
-            return false;
+            return;
         }
-        if let Ok(mut lock) = self.pair.0.lock() {
-            lock.push_back(value);
+        let Ok(mut lock) = self.pair.0.lock() else {
+            return;
+        };
+        lock.push_back(value);
+        if lock.len() == 1 {
             self.pair.1.notify_one();
-            return true;
         }
-        false
     }
 }
 
@@ -45,7 +45,7 @@ impl<ItemType> Clone for Channel<ItemType> {
 }
 
 impl<ItemType> Channel<ItemType> {
-    pub fn dequeue(&self) -> Option<ItemType> {
+    pub(crate) fn dequeue(&self) -> Option<ItemType> {
         if self.closed.load(Ordering::Relaxed) {
             return None;
         }
@@ -63,18 +63,21 @@ impl<ItemType> Channel<ItemType> {
 }
 
 impl<ItemType> Channel<ItemType> {
-    ///
     pub fn close(&self) {
+        if self.closed.load(Ordering::Relaxed) {
+            return;
+        }
         if let Ok(_lock) = self.pair.0.lock() {
             self.closed.store(true, Ordering::Relaxed);
             self.pair.1.notify_all();
         }
     }
 
-    pub fn clear(&self) {
-        if let Ok(mut lock) = self.pair.0.lock() {
-            lock.clear();
-        }
+    pub(crate) fn clear(&self) {
+        let Ok(mut lock) = self.pair.0.lock() else {
+            return;
+        };
+        lock.clear();
     }
 }
 

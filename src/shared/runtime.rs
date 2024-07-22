@@ -1,7 +1,7 @@
 use crate::{
     async_runtime::{executor::Executor, task::Task},
     async_stream::AsyncStream,
-    executors::block_task,
+    executors::{block_on, block_task},
     shared::priority::Priority,
 };
 use std::{
@@ -29,8 +29,11 @@ impl<ItemType> RuntimeEngine<ItemType> {
 
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn cancel(&mut self) {
+        let Ok(mut tasks) = self.tasks.lock() else {
+            return;
+        };
         self.runtime.cancel();
-        self.tasks.lock().unwrap().clear();
+        tasks.clear();
         self.stream.cancel_tasks();
         self.poll();
     }
@@ -42,26 +45,35 @@ impl<ItemType> RuntimeEngine<ItemType> {
     }
 
     pub(crate) fn end(&mut self) {
-        self.runtime.cancel();
-        self.tasks.lock().unwrap().clear();
+        self.cancel();
         self.runtime.end()
     }
 }
 
 impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
     pub(crate) fn wait_for_all_tasks(&self) {
-        self.poll();
-        self.runtime.cancel();
-        if let Ok(mut lock) = self.tasks.lock() {
-            lock.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-            while let Some((_, handle)) = lock.pop() {
-                self.runtime.submit(move || {
-                    block_task(handle);
-                });
-            }
+        let Ok(mut tasks) = self.tasks.lock() else {
+            return;
+        };
+        if tasks.is_empty() {
+            return;
         }
-
-        self.poll();
+        self.runtime.cancel();
+        tasks.retain(|(_, task)| {
+            task.cancel();
+            !task.is_completed()
+        });
+        tasks.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+        if tasks.is_empty() {
+            return;
+        }
+        while let Some((_, task)) = tasks.pop() {
+            if task.is_completed() {
+                continue;
+            }
+            self.runtime.submit(move || block_task(task));
+        }
+        self.poll()
     }
 }
 
@@ -70,13 +82,16 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
     where
         F: Future<Output = ItemType> + Send + 'static,
     {
+        let Ok(mut tasks) = self.tasks.lock() else {
+            return;
+        };
         self.stream.increment();
-        let mut stream: AsyncStream<ItemType> = self.stream();
-        let tasks: Arc<Mutex<Vec<(Priority, Task)>>> = self.tasks.clone();
-        tasks.lock().unwrap().push((
+        let stream: AsyncStream<ItemType> = self.stream();
+        tasks.push((
             priority,
             self.runtime.spawn(async move {
-                stream.insert_item(task.await).await;
+                let task_result = task.await;
+                block_on(async { stream.insert_item(task_result).await });
                 stream.decrement_task_count();
             }),
         ));

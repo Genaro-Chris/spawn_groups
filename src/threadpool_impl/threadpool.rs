@@ -1,67 +1,91 @@
 use std::{
-    backtrace, panic, sync::{Arc, Barrier}, thread::spawn
+    backtrace, panic,
+    sync::atomic::{AtomicUsize, Ordering},
+    thread::spawn,
 };
 
-use super::{Channel, Func};
+use super::{waitgroup::WaitGroup, Channel, Func};
 
-pub struct ThreadPool {
-    task_channel: Channel<Box<Func>>,
-    barrier: Arc<Barrier>,
-    count: usize,
+pub(crate) struct ThreadPool {
+    task_channels: Vec<Channel<Box<Func>>>,
+    index: AtomicUsize,
+    wait_group: WaitGroup,
 }
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        let task_channel: Channel<Box<Func>> = Channel::new();
-        for _ in 1..=count {
-            let channel: Channel<Box<Func>> = task_channel.clone();
-            spawn(move || {
-                panic_hook();
-                while let Some(ops) = channel.dequeue() {
-                    ops()
-                }
-            });
+        let mut count = count;
+        if count < 1 {
+            count = 1;
         }
         ThreadPool {
-            task_channel,
-            count,
-            barrier: Arc::new(Barrier::new(count + 1)),
+            task_channels: (1..=count)
+                .map(|_| {
+                    let channel: Channel<Box<Func>> = Channel::new();
+                    let chan = channel.clone();
+                    spawn(move || {
+                        panic_hook();
+                        for ops in channel {
+                            ops();
+                        }
+                    });
+                    chan
+                })
+                .collect(),
+            index: AtomicUsize::new(0),
+            wait_group: WaitGroup::new(),
         }
     }
 }
 
 impl ThreadPool {
-    pub fn submit<Task>(&self, task: Task)
+    fn current_index(&self) -> usize {
+        self.index.swap(
+            (self.index.load(Ordering::Relaxed) + 1) % self.task_channels.len(),
+            Ordering::SeqCst,
+        )
+    }
+
+    pub(crate) fn submit<Task>(&self, task: Task)
     where
         Task: FnOnce() + 'static + Send,
     {
-        self.task_channel.enqueue(Box::new(task));
+        self.task_channels[self.current_index()].enqueue(Box::new(task));
+    }
+
+    pub(crate) fn wait_for_all(&self) {
+        self.task_channels.iter().for_each(|channel| {
+            let wait_group = self.wait_group.clone();
+            wait_group.enter();
+            channel.enqueue(Box::new(move || {
+                wait_group.leave();
+            }));
+        });
+        self.wait_group.wait();
     }
 }
 
 impl ThreadPool {
-    pub fn wait_for_all(&self) {
-        (1..=self.count).for_each(|_| {
-            let barrier: Arc<Barrier> = self.barrier.clone();
-            self.task_channel.enqueue(Box::new(move || {
-                barrier.wait();
-            }));
+    pub(crate) fn end(&self) {
+        self.task_channels.iter().for_each(|channel| {
+            channel.close();
+            channel.clear();
         });
-        self.barrier.wait();
     }
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
         _ = panic::take_hook();
-        self.task_channel.close();
-        self.clear()
+        self.end();
     }
 }
 
 impl ThreadPool {
-    pub fn clear(&self) {
-        self.task_channel.clear();
+    pub(crate) fn clear(&self) {
+        self.task_channels
+            .iter()
+            .for_each(|channel| channel.clear());
     }
 }
 

@@ -96,6 +96,18 @@ impl DiscardingSpawnGroup {
     }
 }
 
+impl DiscardingSpawnGroup {
+    /// Waits for all remaining child tasks for finish.
+    pub async fn wait_for_all(&mut self) {
+        self.runtime.wait_for_all_tasks();
+    }
+
+    /// Waits for all remaining child tasks for finish in non async context.
+    pub fn wait_non_async(&mut self) {
+        self.runtime.wait_for_all_tasks();
+    }
+}
+
 impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
