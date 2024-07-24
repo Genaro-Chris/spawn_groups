@@ -1,4 +1,4 @@
-use crate::shared::{priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared};
+use crate::shared::{priority::Priority, runtime::RuntimeEngine};
 
 use std::future::Future;
 
@@ -54,9 +54,9 @@ impl DiscardingSpawnGroup {
     /// * `closure`: an async closure that doesn't return anything
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
-        self.add_task(priority, closure);
+        self.runtime.write_task(priority, closure);
     }
 
     /// Spawn a new task only if the group is not cancelled yet,
@@ -68,14 +68,17 @@ impl DiscardingSpawnGroup {
     /// * `closure`: an async closure that return doesn't return anything
     pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
-        self.add_task_unlessed_cancelled(priority, closure);
+        if !self.is_cancelled {
+            self.runtime.write_task(priority, closure);
+        }
     }
 
     /// Cancels all running task in the spawn group
     pub fn cancel_all(&mut self) {
-        self.cancel_all_tasks();
+        self.runtime.cancel();
+        self.is_cancelled = true;
     }
 }
 
@@ -114,30 +117,5 @@ impl Drop for DiscardingSpawnGroup {
             self.runtime.wait_for_all_tasks();
         }
         self.runtime.end()
-    }
-}
-
-impl Shared for DiscardingSpawnGroup {
-    type Result = ();
-
-    fn add_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        self.runtime.write_task(priority, closure);
-    }
-
-    fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        if !self.is_cancelled {
-            self.add_task(priority, closure)
-        }
-    }
-
-    fn cancel_all_tasks(&mut self) {
-        self.runtime.cancel();
-        self.is_cancelled = true;
     }
 }

@@ -1,7 +1,4 @@
-use crate::{
-    executors::{IntoWaker, Notifier},
-    threadpool_impl::{Channel, ThreadPool},
-};
+use crate::{executors::waker_helper, threadpool_impl::{Channel, ThreadPool}};
 
 use super::task::Task;
 
@@ -34,17 +31,17 @@ impl Executor {
 
 impl Executor {
     fn start(&self) {
-        let queue = self.task_queue.clone();
-        let cancelled = self.cancelled.clone();
-        let pool = self.pool.clone();
+        let queue: Channel<Task> = self.task_queue.clone();
+        let cancelled: Arc<AtomicBool> = self.cancelled.clone();
+        let pool: Arc<ThreadPool> = self.pool.clone();
         std::thread::spawn(move || loop {
             let Some(task) = queue.clone().dequeue() else {
                 return;
             };
-            if cancelled.load(Ordering::Relaxed) || task.is_cancelled() {
+            if cancelled.load(Ordering::Acquire) || task.is_cancelled() {
                 continue;
             }
-            let queue = queue.clone();
+            let queue: Channel<Task> = queue.clone();
             pool.submit(move || block_task_with(task, &queue))
         });
     }
@@ -67,10 +64,10 @@ impl Executor {
 
     pub(crate) fn cancel(&self) {
         self.pool.clear();
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancelled.store(true, Ordering::Release);
         self.poll_all();
         self.pool.clear();
-        self.cancelled.store(false, Ordering::Relaxed);
+        self.cancelled.store(false, Ordering::Release);
     }
 
     pub(crate) fn poll_all(&self) {
@@ -84,46 +81,21 @@ impl Executor {
     }
 }
 
-thread_local! {
-    static TASK_WAKER: Waker = {
-        Arc::new(Notifier::default()).into_waker()
-    };
-}
-
-fn block_task_with(future: Task, queue: &Channel<Task>) {
-    if future.is_completed() || future.is_cancelled() {
+fn block_task_with(task: Task, queue: &Channel<Task>) {
+    if task.is_completed() || task.is_cancelled() {
         return;
     }
-    let task = future.clone();
-    let waker_result = TASK_WAKER.try_with(|waker| waker.clone());
-    match waker_result {
-        Ok(waker) => {
-            let mut context: Context<'_> = Context::from_waker(&waker);
-            let Ok(mut future) = future.lock() else {
-                return;
-            };
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(()) => task.complete(),
-                Poll::Pending => {
-                    if !task.is_cancelled() {
-                        queue.enqueue(task.clone());
-                    }
-                }
-            }
-        }
-        Err(_) => {
-            let waker: Waker = Arc::new(Notifier::default()).into_waker();
-            let mut context: Context<'_> = Context::from_waker(&waker);
-            let Ok(mut future) = future.lock() else {
-                return;
-            };
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(()) => task.complete(),
-                Poll::Pending => {
-                    if !task.is_cancelled() {
-                        queue.enqueue(task.clone());
-                    }
-                }
+    let task_clone = task.clone();
+    let waker: Waker = waker_helper(|| {});
+    let mut context: Context<'_> = Context::from_waker(&waker);
+    let Ok(mut future) = task.lock() else {
+        return;
+    };
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(()) => task_clone.complete(),
+        Poll::Pending => {
+            if !task_clone.is_cancelled() {
+                queue.enqueue(task_clone);
             }
         }
     }

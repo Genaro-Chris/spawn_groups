@@ -1,7 +1,4 @@
-use crate::shared::{
-    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared, wait::Waitable,
-};
-use async_trait::async_trait;
+use crate::shared::{priority::Priority, runtime::RuntimeEngine};
 use futures_lite::{Stream, StreamExt};
 use std::{
     future::Future,
@@ -68,9 +65,10 @@ impl<ValueType: Send + 'static> SpawnGroup<ValueType> {
     /// * `closure`: an async closure that return a value of type ``ValueType``
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <SpawnGroup<ValueType> as Shared>::Result> + Send + 'static,
+        F: Future<Output = ValueType> + Send + 'static,
     {
-        self.add_task(priority, closure);
+        self.increment_count();
+        self.runtime.write_task(priority, closure);
     }
 
     /// Spawn a new task only if the group is not cancelled yet,
@@ -82,14 +80,18 @@ impl<ValueType: Send + 'static> SpawnGroup<ValueType> {
     /// * `closure`: an async closure that return a value of type ``ValueType``
     pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <SpawnGroup<ValueType> as Shared>::Result> + Send + 'static,
+        F: Future<Output = ValueType> + Send + 'static,
     {
-        self.add_task_unlessed_cancelled(priority, closure);
+        if !self.is_cancelled {
+            self.spawn_task(priority, closure)
+        }
     }
 
     /// Cancels all running task in the spawn group
     pub fn cancel_all(&mut self) {
-        self.cancel_all_tasks();
+        self.runtime.cancel();
+        self.is_cancelled = true;
+        self.decrement_count_to_zero();
     }
 }
 
@@ -103,7 +105,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
 impl<ValueType: Send> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
-        self.wait().await;
+        self.wait_non_async()
     }
 
     /// Waits for all remaining child tasks for finish in non async context.
@@ -205,45 +207,10 @@ impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send + 'static> Shared for SpawnGroup<ValueType> {
-    type Result = ValueType;
-
-    fn add_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        self.increment_count();
-        self.runtime.write_task(priority, closure);
-    }
-
-    fn cancel_all_tasks(&mut self) {
-        self.runtime.cancel();
-        self.is_cancelled = true;
-        self.decrement_count_to_zero();
-    }
-
-    fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        if !self.is_cancelled {
-            self.add_task(priority, closure)
-        }
-    }
-}
-
 impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.runtime.stream().poll_next(cx)
-    }
-}
-
-#[async_trait]
-impl<ValueType: Send + 'static> Waitable for SpawnGroup<ValueType> {
-    async fn wait(&self) {
-        self.runtime.wait_for_all_tasks();
-        self.decrement_count_to_zero();
     }
 }

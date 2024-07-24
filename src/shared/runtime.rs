@@ -1,15 +1,13 @@
 use crate::{
     async_runtime::{executor::Executor, task::Task},
     async_stream::AsyncStream,
-    executors::{block_on, block_task},
+    block_on,
+    executors::block_task,
     shared::priority::Priority,
 };
-use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, future::Future};
 
-type TaskQueue = Arc<Mutex<Vec<(Priority, Task)>>>;
+type TaskQueue = RefCell<Vec<(Priority, Task)>>;
 
 pub struct RuntimeEngine<ItemType> {
     tasks: TaskQueue,
@@ -20,7 +18,7 @@ pub struct RuntimeEngine<ItemType> {
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn new(count: usize) -> Self {
         Self {
-            tasks: Arc::new(Mutex::new(vec![])),
+            tasks: RefCell::new(vec![]),
             stream: AsyncStream::new(),
             runtime: Executor::new(count),
         }
@@ -29,11 +27,8 @@ impl<ItemType> RuntimeEngine<ItemType> {
 
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn cancel(&mut self) {
-        let Ok(mut tasks) = self.tasks.lock() else {
-            return;
-        };
         self.runtime.cancel();
-        tasks.clear();
+        self.tasks.borrow_mut().clear();
         self.stream.cancel_tasks();
         self.poll();
     }
@@ -45,20 +40,20 @@ impl<ItemType> RuntimeEngine<ItemType> {
     }
 
     pub(crate) fn end(&mut self) {
-        self.cancel();
+        self.runtime.cancel();
+        self.tasks.borrow_mut().clear();
+        self.stream.cancel_tasks();
         self.runtime.end()
     }
 }
 
 impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
     pub(crate) fn wait_for_all_tasks(&self) {
-        let Ok(mut tasks) = self.tasks.lock() else {
-            return;
-        };
+        self.runtime.cancel();
+        let mut tasks = self.tasks.borrow_mut();
         if tasks.is_empty() {
             return;
         }
-        self.runtime.cancel();
         tasks.retain(|(_, task)| {
             task.cancel();
             !task.is_completed()
@@ -82,12 +77,9 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
     where
         F: Future<Output = ItemType> + Send + 'static,
     {
-        let Ok(mut tasks) = self.tasks.lock() else {
-            return;
-        };
         self.stream.increment();
         let stream: AsyncStream<ItemType> = self.stream();
-        tasks.push((
+        self.tasks.borrow_mut().push((
             priority,
             self.runtime.spawn(async move {
                 let task_result = task.await;

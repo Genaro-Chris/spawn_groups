@@ -1,7 +1,4 @@
-use crate::shared::{
-    priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared, wait::Waitable,
-};
-use async_trait::async_trait;
+use crate::shared::{priority::Priority, runtime::RuntimeEngine};
 use futures_lite::{Stream, StreamExt};
 use std::{
     future::Future,
@@ -68,16 +65,19 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// * `closure`: an async closure that return a value of type ``Result<ValueType, ErrorType>``
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <ErrSpawnGroup<ValueType, ErrorType> as Shared>::Result>
+        F: Future<Output = Result<ValueType, ErrorType>>
             + Send
             + 'static,
     {
-        self.add_task(priority, closure);
+        self.increment_count();
+        self.runtime.write_task(priority, closure);
     }
 
     /// Cancels all running task in the spawn group
     pub fn cancel_all(&mut self) {
-        self.cancel_all_tasks();
+        self.runtime.cancel();
+        self.is_cancelled = true;
+        self.decrement_count_to_zero();
     }
 
     /// Spawn a new task only if the group is not cancelled yet,
@@ -89,17 +89,19 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// * `closure`: an async closure that return a value of type ``Result<ValueType, ErrorType>``
     pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <ErrSpawnGroup<ValueType, ErrorType> as Shared>::Result>
+        F: Future<Output = Result<ValueType, ErrorType>>
             + Send
             + 'static,
     {
-        self.add_task_unlessed_cancelled(priority, closure);
+        if !self.is_cancelled {
+            self.spawn_task(priority, closure)
+        }
     }
 }
 
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Returns the first element of the stream, or None if it is empty.
-    pub async fn first(&self) -> Option<<ErrSpawnGroup<ValueType, ErrorType> as Shared>::Result> {
+    pub async fn first(&self) -> Option<Result<ValueType, ErrorType>> {
         self.runtime.stream().first().await
     }
 }
@@ -114,7 +116,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
 impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
-        self.wait().await;
+        self.wait_non_async()
     }
 
     /// Waits for all remaining child tasks for finish in non async context.
@@ -209,49 +211,10 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueTyp
     }
 }
 
-impl<ValueType: Send + 'static, ErrorType: Send + 'static> Shared
-    for ErrSpawnGroup<ValueType, ErrorType>
-{
-    type Result = Result<ValueType, ErrorType>;
-
-    fn add_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        self.increment_count();
-        self.runtime.write_task(priority, closure);
-    }
-
-    fn cancel_all_tasks(&mut self) {
-        self.runtime.cancel();
-        self.is_cancelled = true;
-        self.decrement_count_to_zero();
-    }
-
-    fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        if !self.is_cancelled {
-            self.add_task(priority, closure)
-        }
-    }
-}
-
 impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
     type Item = Result<ValueType, ErrorType>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.runtime.stream().poll_next(cx)
-    }
-}
-
-#[async_trait]
-impl<ValueType: Send + 'static, ErrorType: Send + 'static> Waitable
-    for ErrSpawnGroup<ValueType, ErrorType>
-{
-    async fn wait(&self) {
-        self.runtime.wait_for_all_tasks();
-        self.decrement_count_to_zero();
     }
 }
