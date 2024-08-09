@@ -1,92 +1,134 @@
 use std::{
     collections::VecDeque,
+    future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
-use async_mutex::{Mutex, MutexGuard};
-use futures_lite::{Stream, StreamExt};
+use async_mutex::Mutex;
+use futures_lite::Stream;
 
-use crate::executors::block_on;
+pub struct AsyncStream<ItemType: 'static> {
+    inner: Arc<Inner<ItemType>>,
+}
 
-pub struct AsyncStream<ItemType> {
-    buffer: Arc<Mutex<VecDeque<ItemType>>>,
-    item_count: Arc<AtomicUsize>,
-    task_count: Arc<AtomicUsize>,
-    cancelled: Arc<AtomicBool>,
+struct Inner<ItemType> {
+    inner_lock: Mutex<InnerState<ItemType>>,
+    item_count: AtomicUsize,
+}
+
+impl<ItemType> Inner<ItemType> {
+    fn new() -> Self {
+        Self {
+            inner_lock: Mutex::new(InnerState::new()),
+            item_count: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     #[inline]
     pub(crate) async fn insert_item(&self, value: ItemType) {
-        _ = self
-            .cancelled
-            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed);
-        self.buffer.lock().await.push_back(value);
+        let mut inner_lock = self.inner.inner_lock.lock().await;
+        inner_lock.buffer.push_back(value);
+        // check if any waker was registered
+        let Some(waker) = inner_lock.waker.take() else {
+            return;
+        };
+        // wakeup the waker
+        waker.wake();
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) async fn buffer_count(&self) -> usize {
-        self.buffer.lock().await.len()
+        self.inner.inner_lock.lock().await.buffer.len()
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn increment(&self) {
-        self.task_count.fetch_add(1, Ordering::SeqCst);
-        self.item_count.fetch_add(1, Ordering::SeqCst);
+        self.inner.item_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub async fn first(&mut self) -> Option<ItemType> {
-        self.next().await
+        let mut inner_lock = self.inner.inner_lock.lock().await;
+        if inner_lock.buffer.is_empty() || self.item_count() == 0 {
+            return None;
+        }
+
+        let value = inner_lock.buffer.pop_front()?;
+        self.inner.item_count.fetch_sub(1, Ordering::Relaxed);
+        Some(value)
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
-    pub(crate) fn task_count(&self) -> usize {
-        self.task_count.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn decrement_task_count(&self) {
-        self.task_count.fetch_sub(1, Ordering::SeqCst);
-    }
-
     pub(crate) fn item_count(&self) -> usize {
-        self.item_count.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn cancel_tasks(&mut self) {
-        self.cancelled.store(true, Ordering::Release);
-        self.task_count.store(0, Ordering::Release);
+        self.inner.item_count.load(Ordering::Acquire)
     }
 }
 
 impl<ItemType> Clone for AsyncStream<ItemType> {
     fn clone(&self) -> Self {
         Self {
-            buffer: self.buffer.clone(),
-            task_count: self.task_count.clone(),
-            item_count: self.item_count.clone(),
-            cancelled: self.cancelled.clone(),
+            inner: self.inner.clone(),
         }
     }
 }
 
 impl<ItemType> AsyncStream<ItemType> {
     pub(crate) fn new() -> Self {
-        AsyncStream::<ItemType> {
-            buffer: Arc::new(Mutex::new(VecDeque::new())),
-            item_count: Arc::new(AtomicUsize::new(0)),
-            task_count: Arc::new(AtomicUsize::new(0)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+        AsyncStream {
+            inner: Arc::new(Inner::new()),
         }
+    }
+}
+
+enum Stages<T> {
+    Empty,
+    Wait,
+    Ready(T),
+}
+
+struct InnerState<ItemType> {
+    buffer: VecDeque<ItemType>,
+    waker: Option<Waker>,
+}
+
+impl<T> InnerState<T> {
+    fn new() -> InnerState<T> {
+        Self {
+            buffer: VecDeque::with_capacity(1000),
+            waker: None,
+        }
+    }
+}
+
+impl<ItemType> AsyncStream<ItemType> {
+    fn poll(&self, cx: &mut Context<'_>) -> Poll<Stages<Option<ItemType>>> {
+        let waker = cx.waker().clone();
+        let mut future = async move {
+            let mut inner_lock = self.inner.inner_lock.lock().await;
+            if self.item_count() == 0 && inner_lock.buffer.is_empty() {
+                return Stages::Empty;
+            }
+            let Some(value) = inner_lock.buffer.pop_front() else {
+                // register the waker so we can called it later
+                inner_lock.waker.replace(waker);
+                return Stages::Wait;
+            };
+
+            self.inner.item_count.fetch_sub(1, Ordering::Relaxed);
+            Stages::Ready(Some(value))
+        };
+        unsafe { Future::poll(Pin::new_unchecked(&mut future), cx) }
     }
 }
 
@@ -94,19 +136,22 @@ impl<ItemType> Stream for AsyncStream<ItemType> {
     type Item = ItemType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        block_on(async move {
-            let mut inner_lock: MutexGuard<'_, VecDeque<ItemType>> = self.buffer.lock().await;
-            if self.cancelled.load(Ordering::Relaxed) && inner_lock.is_empty()
-                || self.item_count() == 0
-            {
-                return Poll::Ready(None);
-            }
-            let Some(value) = inner_lock.pop_front() else {
+        match self.poll(cx) {
+            Poll::Pending => {
+                // This means the lock has not been acquired yet
+                // so immediately wake up this waker
                 cx.waker().wake_by_ref();
-                return Poll::Pending;
-            };
-            self.item_count.fetch_sub(1, Ordering::SeqCst);
-            Poll::Ready(Some(value))
-        })
+                Poll::Pending
+            }
+            Poll::Ready(stage) => match stage {
+                Stages::Empty => Poll::Ready(None),
+                Stages::Wait => Poll::Pending,
+                Stages::Ready(value) => Poll::Ready(value),
+            },
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.item_count()))
     }
 }

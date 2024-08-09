@@ -4,17 +4,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::{executors::waker::waker_helper, pin_future};
-
-use super::parker::{pair, Parker};
-
-fn parker_and_waker() -> (Parker, Waker) {
-    let (parker, unparker) = pair();
-    let waker = waker_helper(move || {
-        unparker.unpark();
-    });
-    (parker, waker)
-}
+use super::suspender::{pair, Suspender};
 
 /// Blocks the current thread until the future is polled to finish.
 ///
@@ -28,34 +18,34 @@ fn parker_and_waker() -> (Parker, Waker) {
 /// ```
 ///
 pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
-    pin_future!(future);
+    let mut future = future;
+    let mut future = unsafe { std::pin::Pin::new_unchecked(&mut future) };
     thread_local! {
-        static WAKER_PAIR: RefCell<(Parker, Waker)> = {
-            RefCell::new(parker_and_waker())
+        static WAKER_PAIR: RefCell<(Suspender, Waker)> = {
+            RefCell::new(pair())
         };
     }
     return WAKER_PAIR.with(|waker_pair| match waker_pair.try_borrow_mut() {
         Ok(waker_pair) => {
-            let (parker, waker) = &*waker_pair;
+            let (suspender, waker) = &*waker_pair;
             let mut context: Context<'_> = Context::from_waker(waker);
             loop {
-                match future.as_mut().poll(&mut context) {
-                    Poll::Ready(output) => return output,
-                    Poll::Pending => parker.park(),
-                }
+                let Poll::Ready(output) = Future::poll(future.as_mut(), &mut context) else {
+                    suspender.suspend();
+                    continue;
+                };
+                return output;
             }
         }
         Err(_) => {
-            let (parker, unparker) = pair();
-            let waker = waker_helper(move || {
-                unparker.unpark();
-            });
+            let (suspender, waker) = pair();
             let mut context: Context<'_> = Context::from_waker(&waker);
             loop {
-                match future.as_mut().poll(&mut context) {
-                    Poll::Ready(output) => return output,
-                    Poll::Pending => parker.park(),
-                }
+                let Poll::Ready(output) = Future::poll(future.as_mut(), &mut context) else {
+                    suspender.suspend();
+                    continue;
+                };
+                return output;
             }
         }
     });

@@ -1,34 +1,48 @@
-use std::task::{Context, Poll, Waker};
-
-use crate::async_runtime::task::Task;
-
-use super::{
-    parker::{pair, Parker},
-    waker::waker_helper,
+use std::{
+    cell::RefCell,
+    task::{Context, Poll, Waker},
 };
 
-fn parker_and_waker() -> (Parker, Waker) {
-    let (parker, unparker) = pair();
-    let waker = waker_helper(move || {
-        unparker.unpark();
-    });
-    (parker, waker)
+use crate::shared::priority_task::PrioritizedTask;
+
+use super::{pair, Suspender};
+
+thread_local! {
+    pub(crate) static WAKER_PAIR: RefCell<(Suspender, Waker)> = {
+        RefCell::new(pair())
+    };
 }
 
-pub(crate) fn block_task(task: Task) {
+pub(crate) fn block_task(task: PrioritizedTask) {
     if task.is_completed() {
         return;
     }
 
-    let (parker, waker) = parker_and_waker();
-    let mut context: Context<'_> = Context::from_waker(&waker);
-    let Ok(mut future) = task.lock() else {
-        return;
-    };
-    loop {
-        match future.as_mut().poll(&mut context) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => parker.park(),
-        }
-    }
+    WAKER_PAIR.with(move |waker_pair| {
+        let mut task = task;
+        match waker_pair.try_borrow_mut() {
+            Ok(waker_pair) => {
+                let (suspender, waker) = &*waker_pair;
+                let mut context: Context<'_> = Context::from_waker(waker);
+                loop {
+                    let Poll::Ready(()) = task.poll_task(&mut context) else {
+                        suspender.suspend();
+                        continue;
+                    };
+                    return;
+                }
+            }
+            Err(_) => {
+                let (suspender, waker) = pair();
+                let mut context: Context<'_> = Context::from_waker(&waker);
+                loop {
+                    let Poll::Ready(()) = task.poll_task(&mut context) else {
+                        suspender.suspend();
+                        continue;
+                    };
+                    return;
+                }
+            }
+        };
+    });
 }

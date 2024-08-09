@@ -26,15 +26,15 @@ use std::{
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
 
-pub struct SpawnGroup<ValueType: Send + 'static> {
+pub struct SpawnGroup<ValueType: 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
-    wait_at_drop: bool,
     count: Arc<AtomicUsize>,
     runtime: RuntimeEngine<ValueType>,
+    wait_at_drop: bool,
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Instantiates `SpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
     ///
     /// # Parameters
@@ -50,14 +50,14 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Don't implicity wait for spawned child tasks to finish before being dropped
     pub fn dont_wait_at_drop(&mut self) {
         self.wait_at_drop = false;
     }
 }
 
-impl<ValueType: Send + 'static> SpawnGroup<ValueType> {
+impl<ValueType: 'static> SpawnGroup<ValueType> {
     /// Spawns a new task into the spawn group
     /// # Parameters
     ///
@@ -95,14 +95,14 @@ impl<ValueType: Send + 'static> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Returns the first element of the stream, or None if it is empty.
     pub async fn first(&self) -> Option<ValueType> {
         self.runtime.stream().first().await
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
         self.wait_non_async()
@@ -115,7 +115,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     fn increment_count(&self) {
         self.count.fetch_add(1, Ordering::Acquire);
     }
@@ -129,7 +129,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// A Boolean value that indicates whether the group has any remaining tasks.
     ///
     /// At the start of the body of a ``with_spawn_group()`` call, , or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
@@ -139,21 +139,21 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.count() == 0 || self.runtime.stream().task_count() == 0 {
+        if self.count() == 0 || self.runtime.task_count() == 0 {
             return true;
         }
         false
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Returns an instance of the `Stream` trait.
     pub fn stream(&self) -> impl Stream<Item = ValueType> {
         self.runtime.stream()
     }
 }
 
-impl<ValueType: Send> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
     ///
     /// # Panics
@@ -198,7 +198,7 @@ impl<ValueType: Send> SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
+impl<ValueType> Drop for SpawnGroup<ValueType> {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
@@ -207,7 +207,7 @@ impl<ValueType: Send> Drop for SpawnGroup<ValueType> {
     }
 }
 
-impl<ValueType: Send> Stream for SpawnGroup<ValueType> {
+impl<ValueType> Stream for SpawnGroup<ValueType> {
     type Item = ValueType;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

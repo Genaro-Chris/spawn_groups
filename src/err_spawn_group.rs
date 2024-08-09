@@ -25,7 +25,7 @@ use std::{
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
+pub struct ErrSpawnGroup<ValueType: 'static, ErrorType: 'static> {
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     count: Arc<AtomicUsize>,
@@ -33,7 +33,7 @@ pub struct ErrSpawnGroup<ValueType: Send + 'static, ErrorType: Send + 'static> {
     wait_at_drop: bool,
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Instantiates `ErrSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
     ///
     /// # Parameters
@@ -49,14 +49,14 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Don't implicity wait for spawned child tasks to finish before being dropped
     pub fn dont_wait_at_drop(&mut self) {
         self.wait_at_drop = false;
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Spawns a new task into the spawn group
     ///
     /// # Parameters
@@ -65,9 +65,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// * `closure`: an async closure that return a value of type ``Result<ValueType, ErrorType>``
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = Result<ValueType, ErrorType>>
-            + Send
-            + 'static,
+        F: Future<Output = Result<ValueType, ErrorType>> + Send + 'static,
     {
         self.increment_count();
         self.runtime.write_task(priority, closure);
@@ -89,9 +87,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// * `closure`: an async closure that return a value of type ``Result<ValueType, ErrorType>``
     pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = Result<ValueType, ErrorType>>
-            + Send
-            + 'static,
+        F: Future<Output = Result<ValueType, ErrorType>> + Send + 'static,
     {
         if !self.is_cancelled {
             self.spawn_task(priority, closure)
@@ -99,21 +95,21 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Returns the first element of the stream, or None if it is empty.
     pub async fn first(&self) -> Option<Result<ValueType, ErrorType>> {
         self.runtime.stream().first().await
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Returns an instance of the `Stream` trait.
     pub fn stream(&self) -> impl Stream<Item = Result<ValueType, ErrorType>> {
         self.runtime.stream()
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for all remaining child tasks for finish.
     pub async fn wait_for_all(&mut self) {
         self.wait_non_async()
@@ -126,7 +122,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     fn increment_count(&self) {
         self.count.fetch_add(1, Ordering::Acquire);
     }
@@ -140,7 +136,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// A Boolean value that indicates whether the group has any remaining tasks.
     ///
     /// At the start of the body of a ``with_err_spawn_group`` function call, or before calling ``spawn_task`` or ``spawn_task_unless_cancelled`` methods
@@ -150,14 +146,14 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.count() == 0 || self.runtime.stream().task_count() == 0 {
+        if self.count() == 0 || self.runtime.task_count() == 0 {
             return true;
         }
         false
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// Waits for a specific number of spawned child tasks to finish and returns their respectively result as a vector  
     ///
     /// # Panics
@@ -202,7 +198,7 @@ impl<ValueType: Send, ErrorType: Send> ErrSpawnGroup<ValueType, ErrorType> {
     }
 }
 
-impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> Drop for ErrSpawnGroup<ValueType, ErrorType> {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
@@ -211,7 +207,7 @@ impl<ValueType: Send, ErrorType: Send + 'static> Drop for ErrSpawnGroup<ValueTyp
     }
 }
 
-impl<ValueType: Send, ErrorType: Send> Stream for ErrSpawnGroup<ValueType, ErrorType> {
+impl<ValueType, ErrorType> Stream for ErrSpawnGroup<ValueType, ErrorType> {
     type Item = Result<ValueType, ErrorType>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

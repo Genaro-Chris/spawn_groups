@@ -1,69 +1,84 @@
 use std::{
-    future::Future,
-    ops::Deref,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    task::{Context, Poll},
+    future::Future, hint, pin::Pin, rc::Rc, sync::atomic::{AtomicBool, AtomicU8, Ordering}, task::{Context, Poll}
 };
 
-type LocalBoxedFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+type LocalFuture = dyn Future<Output = ()>;
 
 #[derive(Clone)]
-pub struct Task {
-    future: Arc<Mutex<LocalBoxedFuture>>,
-    complete: Arc<AtomicBool>,
-    cancelled: Arc<AtomicBool>,
+pub(crate) struct Task {
+    inner: Rc<Inner>,
 }
 
 impl Task {
-    pub(crate) fn new<Fut: Future<Output = ()> + Send + 'static>(fut: Fut) -> Self {
+    pub(crate) fn new<Fut: Future<Output = ()> + 'static>(future: Fut) -> Self {
         Self {
-            future: Arc::new(Mutex::new(Box::pin(fut))),
-            complete: Arc::new(AtomicBool::new(false)),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            inner: Rc::new(Inner::new(future)),
         }
     }
+}
 
+impl Task {
     pub(crate) fn is_completed(&self) -> bool {
-        self.complete.load(Ordering::Relaxed)
+        self.inner.complete.load(Ordering::Acquire)
     }
 
     pub(crate) fn complete(&self) {
-        self.complete.store(true, Ordering::Release);
+        self.inner.complete.store(true, Ordering::Release)
     }
 
-    pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
+    pub(crate) fn cancel_task(&self) {
+        self.inner.cancelled.store(true, Ordering::Release)
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.inner.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn poll_task(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        // ensures that only this method is polling the future right now regardless of all other cloned tasks
+        // basically a lightweight spinlock to prevent data race bugs while polling
+        while self
+            .inner
+            .poll_check
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            hint::spin_loop();
+        }
+
+        let result = unsafe { Pin::new_unchecked(&mut (*self.inner.ptr)).poll(cx) };
+        if result.is_ready() {
+            self.complete();
+        }
+        self.inner.poll_check.store(0, Ordering::Release);
+        result
     }
 }
 
-impl Deref for Task {
-    type Target = Arc<Mutex<LocalBoxedFuture>>;
+unsafe impl Send for Task {}
 
-    fn deref(&self) -> &Self::Target {
-        &self.future
+struct Inner {
+    poll_check: AtomicU8,
+    ptr: *mut LocalFuture,
+    cancelled: AtomicBool,
+    complete: AtomicBool,
+}
+
+impl Inner {
+    fn new(future: impl Future<Output = ()> + 'static) -> Self {
+        Self {
+            poll_check: AtomicU8::new(0),
+            ptr: Box::into_raw(Box::new(future)),
+            complete: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+        }
     }
 }
 
-impl Future for Task {
-    type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.future.lock().unwrap().as_mut().poll(cx) {
-            Poll::Ready(()) => {
-                self.complete();
-                Poll::Ready(())
-            }
-            Poll::Pending => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+impl Drop for Inner {
+    fn drop(&mut self) {
+        unsafe {
+            _ = Box::from_raw(self.ptr);
         }
     }
 }

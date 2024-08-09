@@ -92,7 +92,7 @@ impl DiscardingSpawnGroup {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.runtime.stream().task_count() == 0 {
+        if self.runtime.task_count() == 0 {
             return true;
         }
         false

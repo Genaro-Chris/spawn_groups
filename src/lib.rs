@@ -91,9 +91,6 @@
 //! See [`with_discarding_spawn_group`](self::with_discarding_spawn_group)
 //! for more information
 //!
-//! * ``sleep`` similar to ``std::thread::sleep`` but for sleeping in asynchronous environments. See [`sleep`](self::sleep)
-//! for more information
-//!
 //! * ``block_on`` polls future to finish. See [`block_on`](self::block_on)
 //! for more information
 //!
@@ -174,19 +171,14 @@ mod async_stream;
 mod executors;
 mod meta_types;
 mod shared;
-mod sleeper;
 mod threadpool_impl;
-mod yield_now;
 
 pub use discarding_spawn_group::DiscardingSpawnGroup;
 pub use err_spawn_group::ErrSpawnGroup;
 pub use executors::block_on;
 pub use meta_types::GetType;
 pub use shared::priority::Priority;
-pub use sleeper::sleep;
 pub use spawn_group::SpawnGroup;
-pub use yield_now::ready;
-pub use yield_now::yield_now;
 
 use std::future::Future;
 use std::marker::PhantomData;
@@ -197,7 +189,7 @@ use std::thread::available_parallelism;
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -236,14 +228,14 @@ use std::thread::available_parallelism;
 ///  assert_eq!(final_result, 55);
 /// # });
 /// ```
-pub async fn with_type_spawn_group<Closure, Fut, ResultType, ReturnType>(
+pub async fn with_type_spawn_group<'a, Closure, Fut, ResultType, ReturnType>(
     of_type: PhantomData<ResultType>,
     body: Closure,
 ) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + 'a,
     Fut: Future<Output = ReturnType> + Send + 'static,
-    ResultType: Send + 'static,
+    ResultType: 'static,
 {
     let count: usize;
     if let Ok(thread_count) = available_parallelism() {
@@ -261,7 +253,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -299,11 +291,11 @@ where
 ///  assert_eq!(final_result, 55);
 /// # });
 /// ```
-pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
+pub async fn with_spawn_group<'a, Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + 'a,
     Fut: Future<Output = ReturnType> + Send + 'static,
-    ResultType: Send + 'static,
+    ResultType: 'static,
 {
     let count: usize;
     if let Ok(thread_count) = available_parallelism() {
@@ -321,7 +313,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -404,16 +396,16 @@ where
 /// assert_eq!(final_results.2, 2);
 /// # });
 /// ```
-pub async fn with_err_type_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
+pub async fn with_err_type_spawn_group<'a, Closure, Fut, ResultType, ErrorType, ReturnType>(
     of_type: PhantomData<ResultType>,
     error_type: PhantomData<ErrorType>,
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: Send + 'static,
-    Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
-    ResultType: Send + 'static,
+    ErrorType: 'static,
+    Fut: Future<Output = ReturnType> + Send,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + 'a,
+    ResultType: 'static,
 {
     let count: usize;
     if let Ok(thread_count) = available_parallelism() {
@@ -432,7 +424,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
 ///
-/// This function use a threadpoolof the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system  for polling the futures
+/// This function use a threadpoolof the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system  for polling the spawned tasks
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -513,14 +505,14 @@ where
 /// assert_eq!(final_results.2, 2);
 /// # });
 /// ```
-pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
+pub async fn with_err_spawn_group<'a, Closure, Fut, ResultType, ErrorType, ReturnType>(
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: Send + 'static,
-    Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
-    ResultType: Send + 'static,
+    ErrorType: 'static,
+    Fut: Future<Output = ReturnType> + Send,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + 'a,
+    ResultType: 'static,
 {
     let count: usize;
     if let Ok(thread_count) = available_parallelism() {
@@ -536,7 +528,7 @@ where
 ///
 /// Ensures that before the function call ends, all spawned tasks are implicitly waited for
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`DiscardingSpawnGroup`](discarding_spawn_group::DiscardingSpawnGroup)
 /// for more.
@@ -569,10 +561,10 @@ where
 /// }).await;
 /// # });
 /// ```
-pub async fn with_discarding_spawn_group<Closure, Fut, ReturnType>(body: Closure) -> ReturnType
+pub async fn with_discarding_spawn_group<'a, Closure, Fut, ReturnType>(body: Closure) -> ReturnType
 where
-    Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + Send + 'static,
+    Fut: Future<Output = ReturnType> + Send,
+    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + 'a,
 {
     let count: usize;
     if let Ok(thread_count) = available_parallelism() {

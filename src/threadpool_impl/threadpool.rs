@@ -1,5 +1,4 @@
 use std::{
-    backtrace, panic,
     sync::atomic::{AtomicUsize, Ordering},
     thread::spawn,
 };
@@ -7,32 +6,27 @@ use std::{
 use super::{waitgroup::WaitGroup, Channel, Func};
 
 pub(crate) struct ThreadPool {
-    task_channels: Vec<Channel<Box<Func>>>,
     index: AtomicUsize,
+    task_channels: Vec<Channel<Box<Func>>>,
     wait_group: WaitGroup,
 }
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        let mut count = count;
-        if count < 1 {
-            count = 1;
+        let mut task_channels = Vec::with_capacity(count);
+        for _ in 1..=count {
+            let channel: Channel<Box<Func>> = Channel::new();
+            let chan = channel.clone();
+            spawn(move || {
+                while let Some(ops) = channel.dequeue() {
+                    ops();
+                }
+            });
+            task_channels.push(chan);
         }
         ThreadPool {
-            task_channels: (1..=count)
-                .map(|_| {
-                    let channel: Channel<Box<Func>> = Channel::new();
-                    let chan = channel.clone();
-                    spawn(move || {
-                        panic_hook();
-                        for ops in channel {
-                            ops();
-                        }
-                    });
-                    chan
-                })
-                .collect(),
             index: AtomicUsize::new(0),
+            task_channels,
             wait_group: WaitGroup::new(),
         }
     }
@@ -42,7 +36,7 @@ impl ThreadPool {
     fn current_index(&self) -> usize {
         self.index.swap(
             (self.index.load(Ordering::Relaxed) + 1) % self.task_channels.len(),
-            Ordering::SeqCst,
+            Ordering::Relaxed,
         )
     }
 
@@ -76,7 +70,6 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        _ = panic::take_hook();
         self.end();
     }
 }
@@ -87,17 +80,4 @@ impl ThreadPool {
             .iter()
             .for_each(|channel| channel.clear());
     }
-}
-
-fn panic_hook() {
-    panic::set_hook(Box::new(move |info: &panic::PanicInfo<'_>| {
-        let msg = format!(
-            "Threadpool panicked at location {} with {} \nBacktrace:\n{}",
-            info.location().unwrap(),
-            info.to_string().split('\n').collect::<Vec<_>>()[1],
-            backtrace::Backtrace::capture()
-        );
-        eprintln!("{}", msg);
-        _ = panic::take_hook();
-    }));
 }

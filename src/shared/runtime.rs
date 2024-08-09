@@ -1,26 +1,34 @@
 use crate::{
-    async_runtime::{executor::Executor, task::Task},
-    async_stream::AsyncStream,
-    block_on,
-    executors::block_task,
+    async_runtime::executor::Executor, async_stream::AsyncStream, executors::block_task,
     shared::priority::Priority,
 };
-use std::{cell::RefCell, future::Future};
+use std::{
+    collections::BinaryHeap,
+    future::Future,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
 
-type TaskQueue = RefCell<Vec<(Priority, Task)>>;
+use super::priority_task::PrioritizedTask;
 
-pub struct RuntimeEngine<ItemType> {
-    tasks: TaskQueue,
+type TaskQueue = Mutex<BinaryHeap<PrioritizedTask>>;
+
+pub(crate) struct RuntimeEngine<ItemType: 'static> {
+    prioritized_tasks: TaskQueue,
     runtime: Executor,
+    task_count: Arc<AtomicUsize>,
     stream: AsyncStream<ItemType>,
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn new(count: usize) -> Self {
         Self {
-            tasks: RefCell::new(vec![]),
-            stream: AsyncStream::new(),
+            prioritized_tasks: Mutex::new(BinaryHeap::with_capacity(1000)),
             runtime: Executor::new(count),
+            task_count: Arc::new(AtomicUsize::default()),
+            stream: AsyncStream::new(),
         }
     }
 }
@@ -28,8 +36,11 @@ impl<ItemType> RuntimeEngine<ItemType> {
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn cancel(&mut self) {
         self.runtime.cancel();
-        self.tasks.borrow_mut().clear();
-        self.stream.cancel_tasks();
+        let Ok(mut prioritized_tasks) = self.prioritized_tasks.lock() else {
+            return;
+        };
+        prioritized_tasks.clear();
+        self.task_count.store(0, Ordering::Release);
         self.poll();
     }
 }
@@ -41,50 +52,60 @@ impl<ItemType> RuntimeEngine<ItemType> {
 
     pub(crate) fn end(&mut self) {
         self.runtime.cancel();
-        self.tasks.borrow_mut().clear();
-        self.stream.cancel_tasks();
+        let Ok(mut prioritized_tasks) = self.prioritized_tasks.lock() else {
+            return;
+        };
+        prioritized_tasks.clear();
+        self.task_count.store(0, Ordering::Release);
         self.runtime.end()
     }
 }
 
-impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
+impl<ValueType> RuntimeEngine<ValueType> {
     pub(crate) fn wait_for_all_tasks(&self) {
+        let Ok(mut prioritized_tasks) = self.prioritized_tasks.lock() else {
+            return;
+        };
+        if prioritized_tasks.is_empty() {
+            return;
+        }
         self.runtime.cancel();
-        let mut tasks = self.tasks.borrow_mut();
-        if tasks.is_empty() {
-            return;
-        }
-        tasks.retain(|(_, task)| {
-            task.cancel();
-            !task.is_completed()
+        prioritized_tasks.retain(|prioritized_task| {
+            prioritized_task.cancel_task();
+            !prioritized_task.is_completed()
         });
-        tasks.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-        if tasks.is_empty() {
+        if prioritized_tasks.is_empty() {
             return;
         }
-        while let Some((_, task)) = tasks.pop() {
-            if task.is_completed() {
+        while let Some(prioritized_task) = prioritized_tasks.pop() {
+            if prioritized_task.is_completed() {
                 continue;
             }
-            self.runtime.submit(move || block_task(task));
+            self.runtime.submit(move || block_task(prioritized_task));
         }
+        self.task_count.store(0, Ordering::Release);
+        drop(prioritized_tasks);
         self.poll()
     }
 }
 
-impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
+impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn write_task<F>(&self, priority: Priority, task: F)
     where
-        F: Future<Output = ItemType> + Send + 'static,
+        F: Future<Output = ItemType> + 'static,
     {
+        let Ok(mut prioritized_tasks) = self.prioritized_tasks.lock() else {
+            return;
+        };
         self.stream.increment();
-        let stream: AsyncStream<ItemType> = self.stream();
-        self.tasks.borrow_mut().push((
+        self.task_count.fetch_add(1, Ordering::SeqCst);
+        let (stream, task_counter) = (self.stream(), self.task_count.clone());
+        prioritized_tasks.push(PrioritizedTask::new(
             priority,
             self.runtime.spawn(async move {
                 let task_result = task.await;
-                block_on(async { stream.insert_item(task_result).await });
-                stream.decrement_task_count();
+                stream.insert_item(task_result).await;
+                task_counter.fetch_sub(1, Ordering::SeqCst);
             }),
         ));
     }
@@ -93,5 +114,9 @@ impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn poll(&self) {
         self.runtime.poll_all();
+    }
+
+    pub(crate) fn task_count(&self) -> usize {
+        self.task_count.load(Ordering::Acquire)
     }
 }

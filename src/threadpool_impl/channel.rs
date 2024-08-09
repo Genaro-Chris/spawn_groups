@@ -6,13 +6,62 @@ use std::{
     },
 };
 
-pub struct Channel<ItemType> {
-    pair: Arc<(Mutex<VecDeque<ItemType>>, Condvar)>,
-    closed: Arc<AtomicBool>,
+pub(crate) struct Channel<ItemType> {
+    inner: Arc<Inner<ItemType>>,
 }
 
 impl<ItemType> Channel<ItemType> {
     pub(crate) fn enqueue(&self, value: ItemType) {
+        self.inner.enqueue(value)
+    }
+}
+
+impl<ItemType> Channel<ItemType> {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(Inner::new()),
+        }
+    }
+}
+
+impl<ItemType> Clone for Channel<ItemType> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<ItemType> Channel<ItemType> {
+    pub(crate) fn dequeue(&self) -> Option<ItemType> {
+        self.inner.dequeue()
+    }
+}
+
+impl<ItemType> Channel<ItemType> {
+    pub(crate) fn close(&self) {
+        self.inner.close()
+    }
+
+    pub(crate) fn clear(&self) {
+        self.inner.clear()
+    }
+}
+
+struct Inner<ItemType> {
+    closed: AtomicBool,
+    pair: (Mutex<VecDeque<ItemType>>, Condvar),
+}
+
+impl<ItemType> Inner<ItemType> {
+    fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            pair: (Mutex::new(VecDeque::new()), Condvar::new()),
+        }
+    }
+
+    fn enqueue(&self, value: ItemType) {
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
@@ -24,28 +73,8 @@ impl<ItemType> Channel<ItemType> {
             self.pair.1.notify_one();
         }
     }
-}
 
-impl<ItemType> Channel<ItemType> {
-    pub fn new() -> Self {
-        Self {
-            pair: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
-            closed: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-impl<ItemType> Clone for Channel<ItemType> {
-    fn clone(&self) -> Self {
-        Self {
-            pair: self.pair.clone(),
-            closed: self.closed.clone(),
-        }
-    }
-}
-
-impl<ItemType> Channel<ItemType> {
-    pub(crate) fn dequeue(&self) -> Option<ItemType> {
+    fn dequeue(&self) -> Option<ItemType> {
         if self.closed.load(Ordering::Relaxed) {
             return None;
         }
@@ -60,31 +89,21 @@ impl<ItemType> Channel<ItemType> {
         }
         lock.pop_front()
     }
-}
 
-impl<ItemType> Channel<ItemType> {
-    pub fn close(&self) {
-        if self.closed.load(Ordering::Relaxed) {
+    fn close(&self) {
+        if self.closed.swap(true, Ordering::Relaxed) {
             return;
         }
-        if let Ok(_lock) = self.pair.0.lock() {
-            self.closed.store(true, Ordering::Relaxed);
-            self.pair.1.notify_all();
-        }
+        let Ok(_lock) = self.pair.0.lock() else {
+            return;
+        };
+        self.pair.1.notify_all();
     }
 
-    pub(crate) fn clear(&self) {
+    fn clear(&self) {
         let Ok(mut lock) = self.pair.0.lock() else {
             return;
         };
         lock.clear();
-    }
-}
-
-impl<ItemType> Iterator for Channel<ItemType> {
-    type Item = ItemType;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.dequeue()
     }
 }
