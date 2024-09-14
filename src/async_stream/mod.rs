@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_mutex::{Mutex, MutexGuard};
+use async_lock::{Mutex, MutexGuard};
 use futures_lite::{Stream, StreamExt};
 
 use crate::executors::block_on;
