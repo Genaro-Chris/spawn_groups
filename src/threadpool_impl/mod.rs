@@ -1,8 +1,7 @@
 mod channel;
+mod task_priority;
+mod thread;
 mod threadpool;
-mod waitgroup;
 
-pub(crate) type Func = dyn FnOnce() + Send;
-
-pub(crate) use channel::Channel;
+pub(crate) use task_priority::TaskPriority;
 pub(crate) use threadpool::ThreadPool;

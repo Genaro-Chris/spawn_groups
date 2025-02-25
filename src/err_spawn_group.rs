@@ -26,10 +26,10 @@ use std::{
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
 pub struct ErrSpawnGroup<ValueType: 'static, ErrorType: 'static> {
+    runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
+    count: Arc<AtomicUsize>,
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
-    count: Arc<AtomicUsize>,
-    runtime: RuntimeEngine<Result<ValueType, ErrorType>>,
     wait_at_drop: bool,
 }
 
@@ -41,9 +41,21 @@ impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     /// * `num_of_threads`: number of threads to use
     pub fn new(num_of_threads: usize) -> Self {
         Self {
+            runtime: RuntimeEngine::new(num_of_threads),
+            count: Arc::new(AtomicUsize::new(0)),
+            is_cancelled: false,
+            wait_at_drop: true,
+        }
+    }
+}
+
+impl<ValueType, ErrorType> Default for ErrSpawnGroup<ValueType, ErrorType> {
+    /// Instantiates `ErrSpawnGroup` with the number of threads as the number of cores as the system to use in the underlying threadpool when polling futures
+    fn default() -> Self {
+        Self {
             is_cancelled: false,
             count: Arc::new(AtomicUsize::new(0)),
-            runtime: RuntimeEngine::new(num_of_threads),
+            runtime: RuntimeEngine::default(),
             wait_at_drop: true,
         }
     }
@@ -90,7 +102,7 @@ impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
         F: Future<Output = Result<ValueType, ErrorType>> + Send + 'static,
     {
         if !self.is_cancelled {
-            self.spawn_task(priority, closure)
+            self.runtime.write_task(priority, closure)
         }
     }
 }
@@ -124,11 +136,11 @@ impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
 
 impl<ValueType, ErrorType> ErrSpawnGroup<ValueType, ErrorType> {
     fn increment_count(&self) {
-        self.count.fetch_add(1, Ordering::Acquire);
+        self.count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        self.count.load(Ordering::Relaxed)
     }
 
     fn decrement_count_to_zero(&self) {

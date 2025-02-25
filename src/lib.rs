@@ -154,7 +154,7 @@
 //!
 //! # Note
 //! * Import ``StreamExt`` trait from ``futures_lite::StreamExt`` or ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
-//! * To await all running child tasks to finish their execution, call ``wait_for_all`` method on the spawn group instance unless using the [`with_discarding_spawn_group`](self::with_discarding_spawn_group) function.
+//! * To await all running child tasks to finish their execution, call ``wait_for_all`` or ``wait_non_async`` methods on the various group instances
 //!
 //! # Warning
 //! * This crate relies on atomics
@@ -166,7 +166,6 @@ mod discarding_spawn_group;
 mod err_spawn_group;
 mod spawn_group;
 
-mod async_runtime;
 mod async_stream;
 mod executors;
 mod meta_types;
@@ -182,7 +181,6 @@ pub use spawn_group::SpawnGroup;
 
 use std::future::Future;
 use std::marker::PhantomData;
-use std::thread::available_parallelism;
 
 /// Starts a scoped closure that takes a mutable ``SpawnGroup`` instance as an argument which can execute any number of child tasks which its result values are of the generic ``ResultType`` type.
 ///
@@ -228,23 +226,17 @@ use std::thread::available_parallelism;
 ///  assert_eq!(final_result, 55);
 /// # });
 /// ```
-pub async fn with_type_spawn_group<'a, Closure, Fut, ResultType, ReturnType>(
+pub async fn with_type_spawn_group<Closure, Fut, ResultType, ReturnType>(
     of_type: PhantomData<ResultType>,
     body: Closure,
 ) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + 'a,
-    Fut: Future<Output = ReturnType> + Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Fut: Future<Output = ReturnType> + 'static,
     ResultType: 'static,
 {
-    let count: usize;
-    if let Ok(thread_count) = available_parallelism() {
-        count = thread_count.get();
-    } else {
-        count = 1;
-    }
     _ = of_type;
-    let task_group = spawn_group::SpawnGroup::<ResultType>::new(count);
+    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -291,19 +283,13 @@ where
 ///  assert_eq!(final_result, 55);
 /// # });
 /// ```
-pub async fn with_spawn_group<'a, Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
+pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + 'a,
-    Fut: Future<Output = ReturnType> + Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Fut: Future<Output = ReturnType> + 'static,
     ResultType: 'static,
 {
-    let count: usize;
-    if let Ok(thread_count) = available_parallelism() {
-        count = thread_count.get();
-    } else {
-        count = 1;
-    }
-    let task_group = spawn_group::SpawnGroup::<ResultType>::new(count);
+    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -396,25 +382,19 @@ where
 /// assert_eq!(final_results.2, 2);
 /// # });
 /// ```
-pub async fn with_err_type_spawn_group<'a, Closure, Fut, ResultType, ErrorType, ReturnType>(
+pub async fn with_err_type_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
     of_type: PhantomData<ResultType>,
     error_type: PhantomData<ErrorType>,
     body: Closure,
 ) -> ReturnType
 where
     ErrorType: 'static,
-    Fut: Future<Output = ReturnType> + Send,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + 'a,
+    Fut: Future<Output = ReturnType>,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
     ResultType: 'static,
 {
-    let count: usize;
-    if let Ok(thread_count) = available_parallelism() {
-        count = thread_count.get();
-    } else {
-        count = 1;
-    }
     _ = (of_type, error_type);
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new(count);
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -505,22 +485,16 @@ where
 /// assert_eq!(final_results.2, 2);
 /// # });
 /// ```
-pub async fn with_err_spawn_group<'a, Closure, Fut, ResultType, ErrorType, ReturnType>(
+pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnType>(
     body: Closure,
 ) -> ReturnType
 where
     ErrorType: 'static,
-    Fut: Future<Output = ReturnType> + Send,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + 'a,
+    Fut: Future<Output = ReturnType>,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
     ResultType: 'static,
 {
-    let count: usize;
-    if let Ok(thread_count) = available_parallelism() {
-        count = thread_count.get();
-    } else {
-        count = 1;
-    }
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::new(count);
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -561,17 +535,11 @@ where
 /// }).await;
 /// # });
 /// ```
-pub async fn with_discarding_spawn_group<'a, Closure, Fut, ReturnType>(body: Closure) -> ReturnType
+pub async fn with_discarding_spawn_group<Closure, Fut, ReturnType>(body: Closure) -> ReturnType
 where
-    Fut: Future<Output = ReturnType> + Send,
-    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + 'a,
+    Fut: Future<Output = ReturnType>,
+    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut,
 {
-    let count: usize;
-    if let Ok(thread_count) = available_parallelism() {
-        count = thread_count.get();
-    } else {
-        count = 1;
-    }
-    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::new(count);
+    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::default();
     body(discarding_tg).await
 }

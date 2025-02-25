@@ -25,12 +25,11 @@ use std::{
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-
 pub struct SpawnGroup<ValueType: 'static> {
+    runtime: RuntimeEngine<ValueType>,
+    count: Arc<AtomicUsize>,
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
-    count: Arc<AtomicUsize>,
-    runtime: RuntimeEngine<ValueType>,
     wait_at_drop: bool,
 }
 
@@ -42,9 +41,21 @@ impl<ValueType> SpawnGroup<ValueType> {
     /// * `num_of_threads`: number of threads to use
     pub fn new(num_of_threads: usize) -> Self {
         Self {
+            runtime: RuntimeEngine::new(num_of_threads),
+            count: Arc::new(AtomicUsize::new(0)),
+            is_cancelled: false,
+            wait_at_drop: true,
+        }
+    }
+}
+
+impl<ValueType> Default for SpawnGroup<ValueType> {
+    /// Instantiates `SpawnGroup` with the number of threads as the number of cores as the system to use in the underlying threadpool when polling futures
+    fn default() -> Self {
+        Self {
             is_cancelled: false,
             count: Arc::new(AtomicUsize::new(0)),
-            runtime: RuntimeEngine::new(num_of_threads),
+            runtime: RuntimeEngine::default(),
             wait_at_drop: true,
         }
     }
@@ -83,7 +94,7 @@ impl<ValueType: 'static> SpawnGroup<ValueType> {
         F: Future<Output = ValueType> + Send + 'static,
     {
         if !self.is_cancelled {
-            self.spawn_task(priority, closure)
+            self.runtime.write_task(priority, closure)
         }
     }
 
@@ -117,11 +128,11 @@ impl<ValueType> SpawnGroup<ValueType> {
 
 impl<ValueType> SpawnGroup<ValueType> {
     fn increment_count(&self) {
-        self.count.fetch_add(1, Ordering::Acquire);
+        self.count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        self.count.load(Ordering::Relaxed)
     }
 
     fn decrement_count_to_zero(&self) {

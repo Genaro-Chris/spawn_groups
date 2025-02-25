@@ -17,9 +17,9 @@ use std::future::Future;
 /// any order.
 ///
 pub struct DiscardingSpawnGroup {
+    runtime: RuntimeEngine<()>,
     /// A field that indicates if the spawn group has been cancelled
     pub is_cancelled: bool,
-    runtime: RuntimeEngine<()>,
     wait_at_drop: bool,
 }
 
@@ -40,6 +40,17 @@ impl DiscardingSpawnGroup {
         Self {
             is_cancelled: false,
             runtime: RuntimeEngine::new(num_of_threads),
+            wait_at_drop: true,
+        }
+    }
+}
+
+impl Default for DiscardingSpawnGroup {
+    /// Instantiates `DiscardingSpawnGroup` with the number of threads as the number of cores as the system to use in the underlying threadpool when polling futures
+    fn default() -> Self {
+        Self {
+            is_cancelled: false,
+            runtime: RuntimeEngine::default(),
             wait_at_drop: true,
         }
     }

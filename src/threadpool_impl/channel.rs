@@ -1,109 +1,87 @@
 use std::{
-    collections::VecDeque,
+    collections::BinaryHeap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Condvar, Mutex,
+        Condvar,
     },
 };
 
-pub(crate) struct Channel<ItemType> {
-    inner: Arc<Inner<ItemType>>,
+use crate::shared::mutex::StdMutex;
+
+pub(crate) struct Channel<T: Ord> {
+    inner: Inner<T>,
 }
 
-impl<ItemType> Channel<ItemType> {
-    pub(crate) fn enqueue(&self, value: ItemType) {
+impl<T: Ord> Channel<T> {
+    pub(crate) fn enqueue(&self, value: T) {
         self.inner.enqueue(value)
     }
 }
 
-impl<ItemType> Channel<ItemType> {
+impl<T: Ord> Channel<T> {
     pub(crate) fn new() -> Self {
         Self {
-            inner: Arc::new(Inner::new()),
+            inner: Inner::new(),
         }
     }
 }
 
-impl<ItemType> Clone for Channel<ItemType> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-impl<ItemType> Channel<ItemType> {
-    pub(crate) fn dequeue(&self) -> Option<ItemType> {
+impl<T: Ord> Channel<T> {
+    pub(crate) fn dequeue(&self) -> Option<T> {
         self.inner.dequeue()
     }
 }
 
-impl<ItemType> Channel<ItemType> {
-    pub(crate) fn close(&self) {
-        self.inner.close()
-    }
-
+impl<T: Ord> Channel<T> {
     pub(crate) fn clear(&self) {
         self.inner.clear()
     }
+
+    pub(crate) fn end(&self) {
+        self.inner.end()
+    }
 }
 
-struct Inner<ItemType> {
+struct Inner<T: Ord> {
+    mtx: StdMutex<BinaryHeap<T>>,
+    cvar: Condvar,
     closed: AtomicBool,
-    pair: (Mutex<VecDeque<ItemType>>, Condvar),
 }
 
-impl<ItemType> Inner<ItemType> {
+impl<T: Ord> Inner<T> {
     fn new() -> Self {
         Self {
+            mtx: StdMutex::new(BinaryHeap::new()),
+            cvar: Condvar::new(),
             closed: AtomicBool::new(false),
-            pair: (Mutex::new(VecDeque::new()), Condvar::new()),
         }
     }
 
-    fn enqueue(&self, value: ItemType) {
-        if self.closed.load(Ordering::Relaxed) {
-            return;
-        }
-        let Ok(mut lock) = self.pair.0.lock() else {
-            return;
-        };
-        lock.push_back(value);
-        if lock.len() == 1 {
-            self.pair.1.notify_one();
-        }
+    fn enqueue(&self, value: T) {
+        let mut lock = self.mtx.lock();
+        lock.push(value);
+        self.cvar.notify_one();
     }
 
-    fn dequeue(&self) -> Option<ItemType> {
-        if self.closed.load(Ordering::Relaxed) {
-            return None;
-        }
-        let Ok(mut lock) = self.pair.0.lock() else {
-            return None;
-        };
+    fn dequeue(&self) -> Option<T> {
+        let mut lock = self.mtx.lock();
         while lock.is_empty() {
             if self.closed.load(Ordering::Relaxed) {
                 return None;
             }
-            lock = self.pair.1.wait(lock).unwrap();
+            lock = self.cvar.wait(lock).unwrap();
         }
-        lock.pop_front()
-    }
-
-    fn close(&self) {
-        if self.closed.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let Ok(_lock) = self.pair.0.lock() else {
-            return;
-        };
-        self.pair.1.notify_all();
+        lock.pop()
     }
 
     fn clear(&self) {
-        let Ok(mut lock) = self.pair.0.lock() else {
-            return;
-        };
+        self.mtx.lock().clear();
+    }
+
+    fn end(&self) {
+        let mut lock = self.mtx.lock();
+        self.closed.store(true, Ordering::Relaxed);
         lock.clear();
+        self.cvar.notify_all();
     }
 }

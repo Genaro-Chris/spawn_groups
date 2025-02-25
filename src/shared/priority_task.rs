@@ -1,51 +1,50 @@
 use std::{
     cmp::Ordering,
-    ops::{Deref, DerefMut},
+    future::Future,
+    sync::{Arc, Barrier},
 };
 
-use crate::{async_runtime::task::Task, Priority};
+use crate::threadpool_impl::TaskPriority;
 
-pub(crate) struct PrioritizedTask {
-    task: Task,
-    priority: Priority,
+use super::{task::Task, task_enum::TaskOrBarrier};
+
+pub(crate) struct PrioritizedTask<T> {
+    pub(crate) task: TaskOrBarrier<T>,
+    priority: TaskPriority,
 }
 
-impl Deref for PrioritizedTask {
-    type Target = Task;
-
-    fn deref(&self) -> &Self::Target {
-        &self.task
-    }
-}
-
-impl DerefMut for PrioritizedTask {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.task
-    }
-}
-
-impl PartialEq for PrioritizedTask {
+impl<T> PartialEq for PrioritizedTask<T> {
     fn eq(&self, other: &Self) -> bool {
         self.priority == other.priority
     }
 }
 
-impl Eq for PrioritizedTask {}
+impl<T> Eq for PrioritizedTask<T> {}
 
-impl PrioritizedTask {
-    pub(crate) fn new(priority: Priority, task: Task) -> Self {
-        Self { task, priority }
+impl<T> PrioritizedTask<T> {
+    pub(crate) fn new<F: Future<Output = T> + 'static>(priority: TaskPriority, future: F) -> Self {
+        Self {
+            task: TaskOrBarrier::Task(Task::new(future)),
+            priority,
+        }
+    }
+
+    pub(crate) fn new_with(priority: TaskPriority, barrier: Arc<Barrier>) -> Self {
+        Self {
+            task: TaskOrBarrier::Barrier(barrier),
+            priority,
+        }
     }
 }
 
-impl Ord for PrioritizedTask {
+impl<T> Ord for PrioritizedTask<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         other.priority.cmp(&self.priority)
     }
 }
 
-impl PartialOrd for PrioritizedTask {
+impl<T> PartialOrd for PrioritizedTask<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+        Some(other.cmp(self))
     }
 }
