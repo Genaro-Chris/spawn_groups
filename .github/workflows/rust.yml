@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "*" ]
   pull_request:
-    branches: [ "master"  ]
+    branches: [ "*"  ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,7 +31,14 @@ jobs:
          profile: minimal 
          toolchain: nightly 
          override: true 
+     - name: Install Miri
+       run: |
+         rustup toolchain install nightly --component miri
+         rustup override set nightly
+         cargo miri test
      - name: Build
        run: cargo build
      - name: Test 
        run: cargo test
+     - name: Miri Test
+       run: cargo miri test

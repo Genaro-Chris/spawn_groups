@@ -14,8 +14,5 @@ publish = true
 
 
 [dependencies]
-async-trait = "0.1.73"
-cooked-waker = "5.0.0"
-parking_lot = "0.12.1"
-futures-lite = "1.13.0"
-async-mutex = "1.4.0"
+async-lock = "3.4.0"
+futures-lite = { version = "2.5.0", features = ["race"] }

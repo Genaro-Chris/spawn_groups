@@ -1,6 +1,4 @@
-use crate::shared::{
-    initializible::Initializible, priority::Priority, runtime::RuntimeEngine, sharedfuncs::Shared,
-};
+use crate::shared::{priority::Priority, runtime::RuntimeEngine};
 
 use std::future::Future;
 
@@ -19,9 +17,9 @@ use std::future::Future;
 /// any order.
 ///
 pub struct DiscardingSpawnGroup {
+    runtime: RuntimeEngine<()>,
     /// A field that indicates if the spawn group has been cancelled
     pub is_cancelled: bool,
-    runtime: RuntimeEngine<()>,
     wait_at_drop: bool,
 }
 
@@ -34,7 +32,7 @@ impl DiscardingSpawnGroup {
 
 impl DiscardingSpawnGroup {
     /// Instantiates `DiscardingSpawnGroup` with a specific number of threads to use in the underlying threadpool when polling futures
-    /// 
+    ///
     /// # Parameters
     ///
     /// * `num_of_threads`: number of threads to use
@@ -42,7 +40,18 @@ impl DiscardingSpawnGroup {
         Self {
             is_cancelled: false,
             runtime: RuntimeEngine::new(num_of_threads),
-            wait_at_drop: false,
+            wait_at_drop: true,
+        }
+    }
+}
+
+impl Default for DiscardingSpawnGroup {
+    /// Instantiates `DiscardingSpawnGroup` with the number of threads as the number of cores as the system to use in the underlying threadpool when polling futures
+    fn default() -> Self {
+        Self {
+            is_cancelled: false,
+            runtime: RuntimeEngine::default(),
+            wait_at_drop: true,
         }
     }
 }
@@ -56,9 +65,9 @@ impl DiscardingSpawnGroup {
     /// * `closure`: an async closure that doesn't return anything
     pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
-        self.add_task(priority, closure);
+        self.runtime.write_task(priority, closure);
     }
 
     /// Spawn a new task only if the group is not cancelled yet,
@@ -70,14 +79,17 @@ impl DiscardingSpawnGroup {
     /// * `closure`: an async closure that return doesn't return anything
     pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
     where
-        F: Future<Output = <DiscardingSpawnGroup as Shared>::Result> + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
     {
-        self.add_task_unlessed_cancelled(priority, closure);
+        if !self.is_cancelled {
+            self.runtime.write_task(priority, closure);
+        }
     }
 
     /// Cancels all running task in the spawn group
     pub fn cancel_all(&mut self) {
-        self.cancel_all_tasks();
+        self.runtime.cancel();
+        self.is_cancelled = true;
     }
 }
 
@@ -91,10 +103,22 @@ impl DiscardingSpawnGroup {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.runtime.stream().task_count() == 0 {
+        if self.runtime.task_count() == 0 {
             return true;
         }
         false
+    }
+}
+
+impl DiscardingSpawnGroup {
+    /// Waits for all remaining child tasks for finish.
+    pub async fn wait_for_all(&mut self) {
+        self.runtime.wait_for_all_tasks();
+    }
+
+    /// Waits for all remaining child tasks for finish in non async context.
+    pub fn wait_non_async(&mut self) {
+        self.runtime.wait_for_all_tasks();
     }
 }
 
@@ -102,43 +126,7 @@ impl Drop for DiscardingSpawnGroup {
     fn drop(&mut self) {
         if self.wait_at_drop {
             self.runtime.wait_for_all_tasks();
-        } else {
-            self.runtime.end()
         }
-    }
-}
-
-impl Shared for DiscardingSpawnGroup {
-    type Result = ();
-
-    fn add_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        self.runtime.write_task(priority, closure);
-    }
-
-    fn add_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = Self::Result> + Send + 'static,
-    {
-        if !self.is_cancelled {
-            self.add_task(priority, closure)
-        }
-    }
-
-    fn cancel_all_tasks(&mut self) {
-        self.runtime.cancel();
-        self.is_cancelled = true;
-    }
-}
-
-impl Initializible for DiscardingSpawnGroup {
-    fn init() -> Self {
-        DiscardingSpawnGroup {
-            is_cancelled: false,
-            runtime: RuntimeEngine::init(),
-            wait_at_drop: true,
-        }
+        self.runtime.end()
     }
 }

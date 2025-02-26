@@ -1,56 +1,45 @@
-use crate::{
-    async_runtime::{executor::Executor, task::Task},
-    async_stream::AsyncStream,
-    executors::block_task,
-    shared::{initializible::Initializible, priority::Priority},
-};
-use parking_lot::Mutex;
+use crate::{async_stream::AsyncStream, shared::priority::Priority, threadpool_impl::ThreadPool};
 use std::{
     future::Future,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-type TaskQueue = Arc<Mutex<Vec<(Priority, Task)>>>;
+use super::priority_task::PrioritizedTask;
 
-pub struct RuntimeEngine<ItemType> {
-    tasks: TaskQueue,
-    runtime: Executor,
+pub(crate) struct RuntimeEngine<ItemType: 'static> {
     stream: AsyncStream<ItemType>,
-    wait_flag: Arc<AtomicBool>,
-}
-
-impl<ItemType> Initializible for RuntimeEngine<ItemType> {
-    fn init() -> Self {
-        Self {
-            tasks: Arc::new(Mutex::new(vec![])),
-            stream: AsyncStream::new(),
-            runtime: Executor::default(),
-            wait_flag: Arc::new(AtomicBool::new(false)),
-        }
-    }
+    pool: ThreadPool,
+    task_count: Arc<AtomicUsize>,
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
     pub(crate) fn new(count: usize) -> Self {
         Self {
-            tasks: Arc::new(Mutex::new(vec![])),
+            pool: ThreadPool::new(count),
             stream: AsyncStream::new(),
-            runtime: Executor::new(count),
-            wait_flag: Arc::new(AtomicBool::new(false)),
+            task_count: Arc::new(AtomicUsize::default()),
+        }
+    }
+}
+
+impl<ItemType> Default for RuntimeEngine<ItemType> {
+    fn default() -> Self {
+        Self {
+            pool: ThreadPool::default(),
+            stream: AsyncStream::new(),
+            task_count: Arc::new(AtomicUsize::default()),
         }
     }
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
-    pub(crate) fn cancel(&mut self) {
-        self.store(true);
-        self.runtime.cancel();
-        self.tasks.lock().clear();
-        self.stream.cancel_tasks();
-        self.poll();
+    pub(crate) fn cancel(&self) {
+        self.pool.clear();
+        self.pool.wait_for_all();
+        self.task_count.store(0, Ordering::Relaxed);
     }
 }
 
@@ -59,64 +48,44 @@ impl<ItemType> RuntimeEngine<ItemType> {
         self.stream.clone()
     }
 
-    pub(crate) fn end(&mut self) {
-        self.runtime.cancel();
-        self.tasks.lock().clear();
+    pub(crate) fn end(&self) {
+        self.pool.clear();
+        self.pool.wait_for_all();
+        self.task_count.store(0, Ordering::Relaxed);
+        self.pool.end()
     }
 }
 
-impl<ValueType: Send + 'static> RuntimeEngine<ValueType> {
+impl<ValueType> RuntimeEngine<ValueType> {
     pub(crate) fn wait_for_all_tasks(&self) {
         self.poll();
-        self.runtime.cancel();
-        self.tasks.lock().sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
-        self.store(true);
-        while let Some((_, handle)) = self.tasks.lock().pop() {
-            self.runtime.submit(move || {
-                block_task(handle);
-            });
-        }
-        self.poll();
+        self.task_count.store(0, Ordering::Relaxed);
     }
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
-    pub(crate) fn load(&self) -> bool {
-        self.wait_flag.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn store(&self, val: bool) {
-        self.wait_flag.store(val, Ordering::Release);
-    }
-}
-
-impl<ItemType: Send + 'static> RuntimeEngine<ItemType> {
-    pub(crate) fn write_task<F>(&self, priority: Priority, task: F)
+    pub(crate) fn write_task<F>(&mut self, priority: Priority, task: F)
     where
-        F: Future<Output = ItemType> + Send + 'static,
+        F: Future<Output = ItemType> + 'static,
     {
-        if self.load() {
-            self.runtime.start();
-            self.store(false);
-        }
-        self.stream.increment();
-        let mut stream: AsyncStream<ItemType> = self.stream();
-        let runtime = self.runtime.clone();
-        let tasks: Arc<Mutex<Vec<(Priority, Task)>>> = self.tasks.clone();
-        self.runtime.submit(move || {
-            tasks.lock().push((
-                priority,
-                runtime.spawn(async move {
-                    stream.insert_item(task.await).await;
-                    stream.decrement_task_count();
-                }),
-            ));
-        });
+        let (stream, task_counter) = (self.stream(), self.task_count.clone());
+        stream.increment();
+        task_counter.fetch_add(1, Ordering::Relaxed);
+        self.pool
+            .submit(PrioritizedTask::new(priority.into(), async move {
+                let task_result = task.await;
+                stream.insert_item(task_result).await;
+                task_counter.fetch_sub(1, Ordering::Relaxed);
+            }));
     }
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
-    pub(crate) fn poll(&self) {
-        self.runtime.poll_all();
+    fn poll(&self) {
+        self.pool.wait_for_all();
+    }
+
+    pub(crate) fn task_count(&self) -> usize {
+        self.task_count.load(Ordering::Acquire)
     }
 }

@@ -1,133 +1,67 @@
 use std::{
-    backtrace, panic,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Barrier,
-    },
-    thread,
+    sync::{Arc, Barrier},
+    thread::available_parallelism,
 };
 
-use super::{queueops::QueueOperation, thread::UniqueThread, Func, ThreadSafeQueue};
+use crate::shared::priority_task::PrioritizedTask;
 
-pub struct ThreadPool {
+use super::{task_priority::TaskPriority, thread::UniqueThread};
+
+pub(crate) struct ThreadPool {
     handles: Vec<UniqueThread>,
-    count: usize,
-    queue: ThreadSafeQueue<QueueOperation<Func>>,
-    barrier: Arc<Barrier>,
-    stop_flag: Arc<AtomicBool>,
-}
-
-impl Default for ThreadPool {
-    fn default() -> Self {
-        panic_hook();
-        let queue = ThreadSafeQueue::new();
-        let count: usize;
-        if let Ok(thread_count) = thread::available_parallelism() {
-            count = thread_count.get();
-        } else {
-            count = 1;
-        }
-        let barrier = Arc::new(Barrier::new(count + 1));
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let handles = (0..count)
-            .map(|index| start(index, queue.clone(), barrier.clone(), stop_flag.clone()))
-            .collect();
-        ThreadPool {
-            handles,
-            queue,
-            count,
-            barrier,
-            stop_flag,
-        }
-    }
+    index: usize,
 }
 
 impl ThreadPool {
     pub(crate) fn new(count: usize) -> Self {
-        panic_hook();
-        let queue = ThreadSafeQueue::new();
-        let barrier = Arc::new(Barrier::new(count + 1));
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let handles = (0..count)
-            .map(|index| start(index, queue.clone(), barrier.clone(), stop_flag.clone()))
-            .collect();
+        assert!(count > 0);
         ThreadPool {
-            handles,
-            queue,
-            count,
-            barrier,
-            stop_flag,
+            index: 0,
+            handles: (1..=count).map(|_| UniqueThread::default()).collect(),
+        }
+    }
+}
+
+impl Default for ThreadPool {
+    fn default() -> Self {
+        let count: usize = available_parallelism()
+            .unwrap_or(unsafe { std::num::NonZeroUsize::new_unchecked(1) })
+            .get();
+
+        ThreadPool {
+            handles: (1..=count).map(|_| UniqueThread::default()).collect(),
+            index: 0,
         }
     }
 }
 
 impl ThreadPool {
-    pub fn submit<Task>(&self, task: Task)
-    where
-        Task: FnOnce() + 'static + Send,
-    {
-        self.queue.enqueue(QueueOperation::Ready(Box::new(task)));
+    pub(crate) fn submit(&mut self, task: PrioritizedTask<()>) {
+        let old_index = self.index;
+        self.index = (self.index + 1) % self.handles.len();
+        self.handles[old_index].submit_task(task);
+    }
+
+    pub(crate) fn wait_for_all(&self) {
+        let barrier = Arc::new(Barrier::new(self.handles.len() + 1));
+        self.handles.iter().for_each(|channel| {
+            channel.submit_task(PrioritizedTask::new_with(
+                TaskPriority::Wait,
+                barrier.clone(),
+            ));
+        });
+        barrier.wait();
     }
 }
 
 impl ThreadPool {
-    pub fn wait_for_all(&self) {
-        for _ in 0..self.count {
-            self.queue.enqueue(QueueOperation::Wait);
-        }
-        self.barrier.wait();
+    pub(crate) fn end(&self) {
+        self.handles.iter().for_each(|channel| channel.end());
     }
 }
 
 impl ThreadPool {
-    fn cancel_all(&self) {
-        self.stop_flag
-            .store(true, std::sync::atomic::Ordering::Release)
+    pub(crate) fn clear(&self) {
+        self.handles.iter().for_each(|channel| channel.clear());
     }
-}
-
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        _ = panic::take_hook();
-        self.cancel_all();
-        while let Some(handle) = self.handles.pop() {
-            handle.join();
-        }
-    }
-}
-
-fn start(
-    index: usize,
-    queue: ThreadSafeQueue<QueueOperation<Func>>,
-    barrier: Arc<Barrier>,
-    stop_flag: Arc<AtomicBool>,
-) -> UniqueThread {
-    UniqueThread::new(format!("ThreadPool #{}", index), move || {
-        for op in queue {
-            match (op, stop_flag.load(Ordering::Acquire)) {
-                (QueueOperation::NotYet, false) => continue,
-                (QueueOperation::Ready(work), false) => {
-                    work();
-                }
-                (QueueOperation::Wait, false) => _ = barrier.wait(),
-                _ => {
-                    return;
-                }
-            }
-        }
-    })
-}
-
-fn panic_hook() {
-    panic::set_hook(Box::new(move |info: &panic::PanicInfo<'_>| {
-        let msg = format!(
-            "{} panicked at location {} with {} \nBacktrace:\n{}",
-            thread::current().name().unwrap(),
-            info.location().unwrap(),
-            info.to_string().split('\n').collect::<Vec<_>>()[1],
-            backtrace::Backtrace::capture()
-        );
-        eprintln!("{}", msg);
-        _ = panic::take_hook();
-    }));
 }

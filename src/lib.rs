@@ -91,9 +91,6 @@
 //! See [`with_discarding_spawn_group`](self::with_discarding_spawn_group)
 //! for more information
 //!
-//! * ``sleep`` similar to ``std::thread::sleep`` but for sleeping in asynchronous environments. See [`sleep`](self::sleep)
-//! for more information
-//!
 //! * ``block_on`` polls future to finish. See [`block_on`](self::block_on)
 //! for more information
 //!
@@ -157,7 +154,7 @@
 //!
 //! # Note
 //! * Import ``StreamExt`` trait from ``futures_lite::StreamExt`` or ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
-//! * To await all running child tasks to finish their execution, call ``wait_for_all`` method on the spawn group instance unless using the [`with_discarding_spawn_group`](self::with_discarding_spawn_group) function.
+//! * To await all running child tasks to finish their execution, call ``wait_for_all`` or ``wait_non_async`` methods on the various group instances
 //!
 //! # Warning
 //! * This crate relies on atomics
@@ -169,24 +166,18 @@ mod discarding_spawn_group;
 mod err_spawn_group;
 mod spawn_group;
 
-mod async_runtime;
 mod async_stream;
 mod executors;
 mod meta_types;
 mod shared;
-mod sleeper;
 mod threadpool_impl;
-mod yield_now;
 
 pub use discarding_spawn_group::DiscardingSpawnGroup;
 pub use err_spawn_group::ErrSpawnGroup;
 pub use executors::block_on;
 pub use meta_types::GetType;
-use shared::initializible::Initializible;
 pub use shared::priority::Priority;
-pub use sleeper::sleep;
 pub use spawn_group::SpawnGroup;
-pub use yield_now::yield_now;
 
 use std::future::Future;
 use std::marker::PhantomData;
@@ -196,7 +187,7 @@ use std::marker::PhantomData;
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -240,12 +231,12 @@ pub async fn with_type_spawn_group<Closure, Fut, ResultType, ReturnType>(
     body: Closure,
 ) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + Send + 'static,
-    Fut: Future<Output = ReturnType> + Send + 'static,
-    ResultType: Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Fut: Future<Output = ReturnType> + 'static,
+    ResultType: 'static,
 {
     _ = of_type;
-    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
+    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -254,7 +245,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling  its ``wait_for_all()`` method
 /// of the ``SpawnGroup`` struct.
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`SpawnGroup`](spawn_group::SpawnGroup)
 /// for more.
@@ -294,11 +285,11 @@ where
 /// ```
 pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut + Send + 'static,
-    Fut: Future<Output = ReturnType> + Send + 'static,
-    ResultType: Send + 'static,
+    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Fut: Future<Output = ReturnType> + 'static,
+    ResultType: 'static,
 {
-    let task_group = spawn_group::SpawnGroup::<ResultType>::init();
+    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -308,7 +299,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -397,13 +388,13 @@ pub async fn with_err_type_spawn_group<Closure, Fut, ResultType, ErrorType, Retu
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: Send + 'static,
+    ErrorType: 'static,
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
-    ResultType: Send + 'static,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
+    ResultType: 'static,
 {
     _ = (of_type, error_type);
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -413,7 +404,7 @@ where
 /// This closure ensures that before the function call ends, all spawned child tasks are implicitly waited for, or the programmer can explicitly wait by calling its ``wait_for_all()`` method
 /// of the ``ErrSpawnGroup`` struct
 ///
-/// This function use a threadpoolof the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system  for polling the futures
+/// This function use a threadpoolof the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system  for polling the spawned tasks
 ///
 /// See [`ErrSpawnGroup`](err_spawn_group::ErrSpawnGroup)
 /// for more.
@@ -498,12 +489,12 @@ pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnTyp
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: Send + 'static,
+    ErrorType: 'static,
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut + Send + 'static,
-    ResultType: Send + 'static,
+    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
+    ResultType: 'static,
 {
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::init();
+    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -511,7 +502,7 @@ where
 ///
 /// Ensures that before the function call ends, all spawned tasks are implicitly waited for
 ///
-/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the futures
+/// This function use a threadpool of the same number of threads as the number of active processor count that is default amount of parallelism a program can use on the system for polling the spawned tasks
 ///
 /// See [`DiscardingSpawnGroup`](discarding_spawn_group::DiscardingSpawnGroup)
 /// for more.
@@ -547,8 +538,8 @@ where
 pub async fn with_discarding_spawn_group<Closure, Fut, ReturnType>(body: Closure) -> ReturnType
 where
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut + Send + 'static,
+    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut,
 {
-    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::init();
+    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::default();
     body(discarding_tg).await
 }
