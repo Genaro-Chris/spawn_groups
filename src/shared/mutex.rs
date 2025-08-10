@@ -13,3 +13,6 @@ impl<T> StdMutex<T> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
+
+unsafe impl<T: ?Sized> Send for StdMutex<T> {}
+unsafe impl<T: ?Sized> Sync for StdMutex<T> {}

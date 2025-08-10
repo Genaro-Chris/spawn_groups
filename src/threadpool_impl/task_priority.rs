@@ -1,6 +1,6 @@
 use crate::Priority;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum TaskPriority {
     Wait,
     Background,

@@ -34,9 +34,7 @@ pub(crate) unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
 
 // wakes up by consuming it
 pub(crate) unsafe fn wake(ptr: *const ()) {
-    let ptr = ptr as *mut Suspender;
-    let waker = Arc::from_raw(ptr);
-    waker.resume();
+    Arc::from_raw(ptr as *mut Suspender).resume();
 }
 
 // wakes up by reference
@@ -51,6 +49,5 @@ pub(crate) unsafe fn wake_by_ref(ptr: *const ()) {
 
 // drops the waker
 pub(crate) unsafe fn drop_waker(ptr: *const ()) {
-    let ptr = ptr as *mut Suspender;
-    drop(Arc::from_raw(ptr));
+    _ = Arc::from_raw(ptr as *mut Suspender);
 }

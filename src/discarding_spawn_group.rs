@@ -63,10 +63,11 @@ impl DiscardingSpawnGroup {
     ///
     /// * `priority`: priority to use
     /// * `closure`: an async closure that doesn't return anything
-    pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
+    pub fn spawn_task(
+        &mut self,
+        priority: Priority,
+        closure: impl Future<Output = ()> + Send + 'static,
+    ) {
         self.runtime.write_task(priority, closure);
     }
 
@@ -77,10 +78,11 @@ impl DiscardingSpawnGroup {
     ///
     /// * `priority`: priority to use
     /// * `closure`: an async closure that return doesn't return anything
-    pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
+    pub fn spawn_task_unlessed_cancelled(
+        &mut self,
+        priority: Priority,
+        closure: impl Future<Output = ()> + Send + 'static,
+    ) {
         if !self.is_cancelled {
             self.runtime.write_task(priority, closure);
         }
@@ -103,10 +105,7 @@ impl DiscardingSpawnGroup {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.runtime.task_count() == 0 {
-            return true;
-        }
-        false
+        self.runtime.task_count() == 0
     }
 }
 

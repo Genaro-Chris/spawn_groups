@@ -8,8 +8,8 @@
 /// use spawn_groups::GetType;
 /// use std::marker::PhantomData;
 ///
-/// fn closure_taker<FUNC, T, U>(with_value: T, returning_type: PhantomData<U>, closure: FUNC) -> U
-/// where FUNC: Fn(T) -> U {
+/// fn closure_taker<F, T, U>(with_value: T, returning_type: PhantomData<U>, closure: F) -> U
+/// where F: Fn(T) -> U {
 ///     closure(with_value)
 /// }
 ///     

@@ -9,7 +9,7 @@ use std::{
 
 use super::priority_task::PrioritizedTask;
 
-pub(crate) struct RuntimeEngine<ItemType: 'static> {
+pub(crate) struct RuntimeEngine<ItemType> {
     stream: AsyncStream<ItemType>,
     pool: ThreadPool,
     task_count: Arc<AtomicUsize>,
@@ -64,10 +64,7 @@ impl<ValueType> RuntimeEngine<ValueType> {
 }
 
 impl<ItemType> RuntimeEngine<ItemType> {
-    pub(crate) fn write_task<F>(&mut self, priority: Priority, task: F)
-    where
-        F: Future<Output = ItemType> + 'static,
-    {
+    pub(crate) fn write_task(&mut self, priority: Priority, task: impl Future<Output = ItemType>) {
         let (stream, task_counter) = (self.stream(), self.task_count.clone());
         stream.increment();
         task_counter.fetch_add(1, Ordering::Relaxed);

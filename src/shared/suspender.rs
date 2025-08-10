@@ -14,42 +14,19 @@ pub(crate) fn pair() -> (Arc<Suspender>, Waker) {
 }
 
 pub(crate) struct Suspender {
-    inner: Inner,
+    lock: StdMutex<State>,
+    cvar: Condvar,
 }
 
 impl Suspender {
     pub(crate) fn new() -> Suspender {
         Suspender {
-            inner: Inner {
-                lock: StdMutex::new(State::Initial),
-                cvar: Condvar::new(),
-            },
+            lock: StdMutex::new(State::Initial),
+            cvar: Condvar::new(),
         }
     }
 
     pub(crate) fn suspend(&self) {
-        self.inner.suspend();
-    }
-
-    pub(crate) fn resume(&self) {
-        self.inner.resume();
-    }
-}
-
-#[derive(PartialEq)]
-enum State {
-    Initial,
-    Notified,
-    Suspended,
-}
-
-struct Inner {
-    lock: StdMutex<State>,
-    cvar: Condvar,
-}
-
-impl Inner {
-    fn suspend(&self) {
         // Acquire the lock first
         let mut lock = self.lock.lock();
 
@@ -74,23 +51,26 @@ impl Inner {
         }
     }
 
-    fn resume(&self) {
+    pub(crate) fn resume(&self) {
         // Acquire the lock first
         let mut lock = self.lock.lock();
 
         // check if the state is empty or suspended
-        match *lock {
-            State::Initial => {
-                // send notification
-                *lock = State::Notified;
-            }
-            State::Suspended => {
-                // send notification
-                *lock = State::Notified;
-                // resume the suspended thread
-                self.cvar.notify_one();
-            }
-            _ => {}
+        if *lock == State::Initial {
+            // send notification
+            *lock = State::Notified;
+        } else if *lock == State::Suspended {
+            // send notification
+            *lock = State::Notified;
+            // resume the suspended thread
+            self.cvar.notify_one();
         }
     }
+}
+
+#[derive(PartialEq)]
+enum State {
+    Initial,
+    Notified,
+    Suspended,
 }

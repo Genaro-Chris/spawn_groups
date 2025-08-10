@@ -5,10 +5,11 @@ use std::{
 
 use crate::shared::priority_task::PrioritizedTask;
 
-use super::{task_priority::TaskPriority, thread::UniqueThread};
+use super::eventloop::EventLoop;
 
 pub(crate) struct ThreadPool {
-    handles: Vec<UniqueThread>,
+    handles: Vec<EventLoop>,
+    barrier: Arc<Barrier>,
     index: usize,
 }
 
@@ -17,7 +18,8 @@ impl ThreadPool {
         assert!(count > 0);
         ThreadPool {
             index: 0,
-            handles: (1..=count).map(|_| UniqueThread::default()).collect(),
+            barrier: Arc::new(Barrier::new(count + 1)),
+            handles: (1..=count).map(EventLoop::new).collect(),
         }
     }
 }
@@ -25,13 +27,10 @@ impl ThreadPool {
 impl Default for ThreadPool {
     fn default() -> Self {
         let count: usize = available_parallelism()
-            .unwrap_or(unsafe { std::num::NonZeroUsize::new_unchecked(1) })
+            .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
             .get();
 
-        ThreadPool {
-            handles: (1..=count).map(|_| UniqueThread::default()).collect(),
-            index: 0,
-        }
+        ThreadPool::new(count)
     }
 }
 
@@ -43,14 +42,10 @@ impl ThreadPool {
     }
 
     pub(crate) fn wait_for_all(&self) {
-        let barrier = Arc::new(Barrier::new(self.handles.len() + 1));
         self.handles.iter().for_each(|channel| {
-            channel.submit_task(PrioritizedTask::new_with(
-                TaskPriority::Wait,
-                barrier.clone(),
-            ));
+            channel.submit_task(PrioritizedTask::new_with(self.barrier.clone()));
         });
-        barrier.wait();
+        self.barrier.wait();
     }
 }
 

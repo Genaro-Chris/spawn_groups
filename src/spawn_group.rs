@@ -3,10 +3,6 @@ use futures_lite::{Stream, StreamExt};
 use std::{
     future::Future,
     pin::Pin,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
     task::{Context, Poll},
 };
 
@@ -25,9 +21,8 @@ use std::{
 ///
 /// It dereferences into a ``futures`` crate ``Stream`` type where the results of each finished child task is stored and it pops out the result in First-In First-Out
 /// FIFO order whenever it is being used
-pub struct SpawnGroup<ValueType: 'static> {
+pub struct SpawnGroup<ValueType> {
     runtime: RuntimeEngine<ValueType>,
-    count: Arc<AtomicUsize>,
     /// A field that indicates if the spawn group had been cancelled
     pub is_cancelled: bool,
     wait_at_drop: bool,
@@ -42,7 +37,6 @@ impl<ValueType> SpawnGroup<ValueType> {
     pub fn new(num_of_threads: usize) -> Self {
         Self {
             runtime: RuntimeEngine::new(num_of_threads),
-            count: Arc::new(AtomicUsize::new(0)),
             is_cancelled: false,
             wait_at_drop: true,
         }
@@ -54,7 +48,6 @@ impl<ValueType> Default for SpawnGroup<ValueType> {
     fn default() -> Self {
         Self {
             is_cancelled: false,
-            count: Arc::new(AtomicUsize::new(0)),
             runtime: RuntimeEngine::default(),
             wait_at_drop: true,
         }
@@ -66,19 +59,25 @@ impl<ValueType> SpawnGroup<ValueType> {
     pub fn dont_wait_at_drop(&mut self) {
         self.wait_at_drop = false;
     }
+
+    /// Cancels all running task in the spawn group
+    pub fn cancel_all(&mut self) {
+        self.runtime.cancel();
+        self.is_cancelled = true;
+    }
 }
 
-impl<ValueType: 'static> SpawnGroup<ValueType> {
+impl<ValueType> SpawnGroup<ValueType> {
     /// Spawns a new task into the spawn group
     /// # Parameters
     ///
     /// * `priority`: priority to use
     /// * `closure`: an async closure that return a value of type ``ValueType``
-    pub fn spawn_task<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = ValueType> + Send + 'static,
-    {
-        self.increment_count();
+    pub fn spawn_task(
+        &mut self,
+        priority: Priority,
+        closure: impl Future<Output = ValueType> + Send + 'static,
+    ) {
         self.runtime.write_task(priority, closure);
     }
 
@@ -89,20 +88,14 @@ impl<ValueType: 'static> SpawnGroup<ValueType> {
     ///
     /// * `priority`: priority to use
     /// * `closure`: an async closure that return a value of type ``ValueType``
-    pub fn spawn_task_unlessed_cancelled<F>(&mut self, priority: Priority, closure: F)
-    where
-        F: Future<Output = ValueType> + Send + 'static,
-    {
+    pub fn spawn_task_unlessed_cancelled(
+        &mut self,
+        priority: Priority,
+        closure: impl Future<Output = ValueType> + Send + 'static,
+    ) {
         if !self.is_cancelled {
             self.runtime.write_task(priority, closure)
         }
-    }
-
-    /// Cancels all running task in the spawn group
-    pub fn cancel_all(&mut self) {
-        self.runtime.cancel();
-        self.is_cancelled = true;
-        self.decrement_count_to_zero();
     }
 }
 
@@ -122,21 +115,6 @@ impl<ValueType> SpawnGroup<ValueType> {
     /// Waits for all remaining child tasks for finish in non async context.
     pub fn wait_non_async(&mut self) {
         self.runtime.wait_for_all_tasks();
-        self.decrement_count_to_zero()
-    }
-}
-
-impl<ValueType> SpawnGroup<ValueType> {
-    fn increment_count(&self) {
-        self.count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn count(&self) -> usize {
-        self.count.load(Ordering::Relaxed)
-    }
-
-    fn decrement_count_to_zero(&self) {
-        self.count.store(0, Ordering::Relaxed);
     }
 }
 
@@ -150,10 +128,7 @@ impl<ValueType> SpawnGroup<ValueType> {
     /// - true: if there's no child task still running
     /// - false: if any child task is still running
     pub fn is_empty(&self) -> bool {
-        if self.count() == 0 || self.runtime.task_count() == 0 {
-            return true;
-        }
-        false
+        self.runtime.task_count() == 0
     }
 }
 
@@ -194,7 +169,7 @@ impl<ValueType> SpawnGroup<ValueType> {
             }
             return results;
         }
-        if of_count > self.count() {
+        if of_count > self.runtime.task_count() {
             panic!("The argument supplied cannot be greater than the number of spawned child tasks")
         }
         let mut count: usize = of_count;

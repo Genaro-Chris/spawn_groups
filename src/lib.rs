@@ -135,7 +135,7 @@
 //!          });
 //!      }
 //!
-//!      // Loop over all the results of the child tasks spawned already
+//!      // Loop over all the results of the child tasks spawned asynchronously
 //!      let mut counter = 0;
 //!      while let Some(x) = group.next().await {
 //!         counter += x;
@@ -149,18 +149,23 @@
 //! ```
 //!
 //! # Comparisons against existing alternatives
+//! * [`JoinSet`](): Like this alternative, both await the completion of some or all of the child tasks,
+//! spawn child tasks in an unordered manner and the result of their child tasks will be returned in the
+//!  order they complete and also cancel or abort all child tasks. Unlike the `Joinset`,
+//! you can explicitly await for all the child task to finish their execution.
+//! The Spawn group option provides a scope for the child tasks to execute.
 //!
-//!
+//! * [`FuturesUnordered`]() Like this alternative, both spawn child tasks in an unordered manner,
+//! but FuturesUnordered doesn't immediately start running the spawned child tasks until it is being polled.
+//! It also doesn't provide a way to cancel all child tasks.
 //!
 //! # Note
 //! * Import ``StreamExt`` trait from ``futures_lite::StreamExt`` or ``futures::stream::StreamExt`` or ``async_std::stream::StreamExt`` to provide a variety of convenient combinator functions on the various spawn groups.
 //! * To await all running child tasks to finish their execution, call ``wait_for_all`` or ``wait_non_async`` methods on the various group instances
 //!
 //! # Warning
-//! * This crate relies on atomics
-//! * Avoid using a spawn group from outside the above functions this crate provides
+//! * This crate relies on atomics, condition variables
 //! * Avoid calling long, blocking, non asynchronous functions while using any of the spawn groups because it was built with asynchrony in mind.
-//! * Avoid spawning off an asynchronous function such as calling spawn methods from crate such as tokio, async_std, smol, etc.
 
 mod discarding_spawn_group;
 mod err_spawn_group;
@@ -231,12 +236,11 @@ pub async fn with_type_spawn_group<Closure, Fut, ResultType, ReturnType>(
     body: Closure,
 ) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Closure: FnOnce(SpawnGroup<ResultType>) -> Fut,
     Fut: Future<Output = ReturnType> + 'static,
-    ResultType: 'static,
 {
     _ = of_type;
-    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
+    let task_group = SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -285,11 +289,10 @@ where
 /// ```
 pub async fn with_spawn_group<Closure, Fut, ResultType, ReturnType>(body: Closure) -> ReturnType
 where
-    Closure: FnOnce(spawn_group::SpawnGroup<ResultType>) -> Fut,
+    Closure: FnOnce(SpawnGroup<ResultType>) -> Fut,
     Fut: Future<Output = ReturnType> + 'static,
-    ResultType: 'static,
 {
-    let task_group = spawn_group::SpawnGroup::<ResultType>::default();
+    let task_group = SpawnGroup::<ResultType>::default();
     body(task_group).await
 }
 
@@ -388,13 +391,11 @@ pub async fn with_err_type_spawn_group<Closure, Fut, ResultType, ErrorType, Retu
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: 'static,
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
-    ResultType: 'static,
+    Closure: FnOnce(ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
 {
     _ = (of_type, error_type);
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
+    let task_group = ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -489,12 +490,10 @@ pub async fn with_err_spawn_group<Closure, Fut, ResultType, ErrorType, ReturnTyp
     body: Closure,
 ) -> ReturnType
 where
-    ErrorType: 'static,
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(err_spawn_group::ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
-    ResultType: 'static,
+    Closure: FnOnce(ErrSpawnGroup<ResultType, ErrorType>) -> Fut,
 {
-    let task_group = err_spawn_group::ErrSpawnGroup::<ResultType, ErrorType>::default();
+    let task_group = ErrSpawnGroup::<ResultType, ErrorType>::default();
     body(task_group).await
 }
 
@@ -538,8 +537,8 @@ where
 pub async fn with_discarding_spawn_group<Closure, Fut, ReturnType>(body: Closure) -> ReturnType
 where
     Fut: Future<Output = ReturnType>,
-    Closure: FnOnce(discarding_spawn_group::DiscardingSpawnGroup) -> Fut,
+    Closure: FnOnce(DiscardingSpawnGroup) -> Fut,
 {
-    let discarding_tg = discarding_spawn_group::DiscardingSpawnGroup::default();
+    let discarding_tg = DiscardingSpawnGroup::default();
     body(discarding_tg).await
 }

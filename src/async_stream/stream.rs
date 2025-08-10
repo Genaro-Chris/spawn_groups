@@ -1,6 +1,5 @@
 use std::{
     collections::VecDeque,
-    future::Future,
     pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -11,6 +10,8 @@ use std::{
 
 use async_lock::Mutex;
 use futures_lite::Stream;
+
+use crate::shared::Task;
 
 pub struct AsyncStream<ItemType> {
     inner: Arc<Inner<ItemType>>,
@@ -119,7 +120,7 @@ impl<ItemType> AsyncStream<ItemType> {
             return Poll::Ready(Stages::Empty);
         }
         let waker = cx.waker().clone();
-        let mut future = async move {
+        let future = Task::new(async move {
             let mut inner_lock = self.inner.inner_lock.lock().await;
             if self.item_count() == 0 && inner_lock.buffer.is_empty() {
                 return Stages::Empty;
@@ -132,8 +133,8 @@ impl<ItemType> AsyncStream<ItemType> {
 
             self.inner.item_count.fetch_sub(1, Ordering::Relaxed);
             Stages::Ready(value)
-        };
-        unsafe { Pin::new_unchecked(&mut future) }.poll(cx)
+        });
+        future.poll_task(cx)
     }
 }
 
