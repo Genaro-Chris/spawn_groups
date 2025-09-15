@@ -120,7 +120,7 @@ impl<ItemType> AsyncStream<ItemType> {
             return Poll::Ready(Stages::Empty);
         }
         let waker = cx.waker().clone();
-        let future = Task::new(async move {
+        let mut future = async move {
             let mut inner_lock = self.inner.inner_lock.lock().await;
             if self.item_count() == 0 && inner_lock.buffer.is_empty() {
                 return Stages::Empty;
@@ -133,8 +133,9 @@ impl<ItemType> AsyncStream<ItemType> {
 
             self.inner.item_count.fetch_sub(1, Ordering::Relaxed);
             Stages::Ready(value)
-        });
-        future.poll_task(cx)
+        };
+        let task = Task::from_ref(&mut future);
+        task.poll_task(cx)
     }
 }
 

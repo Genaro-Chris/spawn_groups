@@ -13,11 +13,11 @@ thread_local! {
 }
 
 #[inline]
-pub(crate) fn block_on<T>(future: Task<T>, pair: &(Arc<Suspender>, Waker)) -> T {
-    let future = Task::new(future);
+pub(crate) fn block_on<T>(mut future: Task<T>, pair: &(Arc<Suspender>, Waker)) -> T {
+    let task = Task::from_ref(&mut future);
     let mut context: Context<'_> = Context::from_waker(&pair.1);
     loop {
-        match future.poll_task(&mut context) {
+        match task.poll_task(&mut context) {
             Poll::Pending => pair.0.suspend(),
             Poll::Ready(output) => return output,
         }

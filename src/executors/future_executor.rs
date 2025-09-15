@@ -26,7 +26,8 @@ pub fn block_on<Fut: Future>(future: Fut) -> Fut::Output {
     }
 
     PAIR.with(move |waker_pair| {
-        let future = Task::new(future);
+        let mut future = future;
+        let future = Task::from_ref(&mut future);
         let (suspender, waker) = waker_pair;
         let mut context: Context<'_> = Context::from_waker(waker);
         loop {

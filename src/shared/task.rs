@@ -24,6 +24,18 @@ impl<T> Task<T> {
         }
     }
 
+    pub(crate) fn from_ref<Fut: Future<Output = T>>(fut: &mut Fut) -> Self {
+        unsafe {
+            Self {
+                raw_ptr: NonNull::new_unchecked(<*mut Fut>::cast::<()>(fut)),
+                poll_fn: |self_ptr, cntx| {
+                    Pin::new_unchecked(self_ptr.cast::<Fut>().as_mut()).poll(cntx)
+                },
+                drop_fn: |_| {},
+            }
+        }
+    }
+
     pub(crate) fn poll_task(&self, cx: &mut Context<'_>) -> Poll<T> {
         (self.poll_fn)(self.raw_ptr, cx)
     }
