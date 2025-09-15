@@ -16,7 +16,7 @@ This was heavily influenced by the Swift language's [`TaskGroup`](https://develo
 Add to your code
 
 ```sh
-cargo add spawn_groups@2.0.0
+cargo add spawn_groups@1.1.0
 ```
 
 ## Example
